@@ -68,6 +68,7 @@ export default function Home() {
               </button>
             </div>
             <Sidebar
+              variant="mobile"
               conversations={conversations}
               activeId={activeId}
               onSelect={(id) => {

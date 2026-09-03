@@ -13,6 +13,10 @@ interface SidebarProps {
   onNewChat: () => void;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
+  // "desktop" (default): hides itself below the md breakpoint, for the permanent
+  // sidebar. "mobile": always visible, meant to be rendered inside the mobile
+  // drawer overlay (which already handles its own open/close + backdrop).
+  variant?: "desktop" | "mobile";
 }
 
 export default function Sidebar({
@@ -22,13 +26,16 @@ export default function Sidebar({
   onNewChat,
   onDelete,
   onOpenSettings,
+  variant = "desktop",
 }: SidebarProps) {
   const { t } = useLanguage();
   const { data: session } = useSession();
 
   return (
     <aside
-      className="hidden md:flex md:w-72 flex-col h-screen border-r shrink-0"
+      className={`${
+        variant === "mobile" ? "flex w-72" : "hidden md:flex md:w-72"
+      } flex-col h-screen border-r shrink-0`}
       style={{
         backgroundColor: "var(--bg-sidebar)",
         borderColor: "var(--border-color)",

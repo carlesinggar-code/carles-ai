@@ -33,7 +33,7 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
       )}
 
       <div
-        className={`max-w-[80%] md:max-w-[70%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+        className={`max-w-[80%] md:max-w-[70%] min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed ${
           isUser ? "bg-accent text-white rounded-tr-sm" : "rounded-tl-sm"
         }`}
         style={!isUser ? { backgroundColor: "var(--bg-secondary)" } : undefined}
@@ -51,7 +51,23 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
           <div className="markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // Tabel GFM defaultnya nggak respect max-width parent dan
+                // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
+                // sendiri, bukan ikut ndorong lebar seluruh chat bubble.
+                table: ({ children, ...props }) => (
+                  <div className="overflow-x-auto max-w-full my-2 -mx-1">
+                    <table {...props} className="text-xs">
+                      {children}
+                    </table>
+                  </div>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         )}
       </div>

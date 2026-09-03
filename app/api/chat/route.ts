@@ -16,7 +16,8 @@ interface IncomingMessage {
 // ATAU sebagai fallback kalau Gemini gagal/timeout.
 const TEXT_MODEL = "openai/gpt-oss-120b";
 // Model vision: dipakai otomatis kalau ada pesan user yang melampirkan gambar.
-const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+// (meta-llama/llama-4-scout-17b-16e-instruct sudah di-deprecate Groq per 17 Jun 2026)
+const VISION_MODEL = "qwen/qwen3.6-27b";
 // Batas waktu tunggu Gemini sebelum kita fallback ke Groq (ms).
 const GEMINI_TIMEOUT_MS = 7000;
 
@@ -27,6 +28,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       setTimeout(() => reject(new Error("Gemini timeout")), ms)
     ),
   ]);
+}
+
+// Jaring pengaman: beberapa model reasoning kadang masih nyelipin blok
+// <think>...</think> walau parameter buat nyembunyiinnya udah diset.
+// Ini buang blok itu sebelum dikirim ke user.
+function stripThinkingTags(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
 async function callGroqText(
@@ -90,9 +98,14 @@ export async function POST(req: NextRequest) {
           ...(formattedMessages as any),
         ],
         max_tokens: 1500,
-      });
+        // qwen3.6-27b itu reasoning model, defaultnya nampilin proses
+        // "<think>...</think>" di jawaban. "hidden" biar cuma jawaban
+        // akhirnya aja yang balik.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        reasoning_format: "hidden",
+      } as any);
       return NextResponse.json({
-        reply: completion.choices[0]?.message?.content ?? "",
+        reply: stripThinkingTags(completion.choices[0]?.message?.content ?? ""),
         provider: "groq-vision",
       });
     }

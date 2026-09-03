@@ -41,15 +41,63 @@ export default function ChatWindow({
     t("suggestion4"),
   ];
 
-  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+  // Foto dari kamera HP bisa 3-8MB+ dalam format asli. Vercel Serverless
+  // Function punya limit request body 4.5MB, jadi kita kompres & resize
+  // dulu di browser sebelum dijadikan base64 (dikirim ke API).
+  const MAX_DIMENSION = 1280;
+  const JPEG_QUALITY = 0.7;
+
+  function compressImage(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Gagal memuat gambar"));
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            if (width > height) {
+              height = Math.round((height * MAX_DIMENSION) / width);
+              width = MAX_DIMENSION;
+            } else {
+              width = Math.round((width * MAX_DIMENSION) / height);
+              height = MAX_DIMENSION;
+            }
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(reader.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (!file) return;
     if (!file.type.startsWith("image/")) return;
 
-    const reader = new FileReader();
-    reader.onload = () => setPendingImage(reader.result as string);
-    reader.readAsDataURL(file);
-    e.target.value = "";
+    try {
+      const compressed = await compressImage(file);
+      setPendingImage(compressed);
+    } catch {
+      // Fallback: kalau kompresi gagal, pakai file asli (lebih baik daripada
+      // gagal total, meskipun berisiko kena limit ukuran).
+      const reader = new FileReader();
+      reader.onload = () => setPendingImage(reader.result as string);
+      reader.readAsDataURL(file);
+    }
   }
 
   async function handleSend(text?: string) {
@@ -71,10 +119,15 @@ export default function ChatWindow({
     setLoading(true);
 
     try {
-      const history = [...(conversation?.messages ?? []), userMessage].map((m) => ({
+      const fullHistory = [...(conversation?.messages ?? []), userMessage];
+      const lastIndex = fullHistory.length - 1;
+      const history = fullHistory.map((m, i) => ({
         role: m.role,
         content: m.content,
-        image: m.image,
+        // Cuma sertakan gambar untuk pesan TERAKHIR. Gambar lama di history
+        // nggak perlu dikirim ulang tiap request (AI udah "komentar" soal itu
+        // di balasan sebelumnya) — ini yang bikin payload membengkak & error.
+        image: i === lastIndex ? m.image : undefined,
       }));
 
       const res = await fetch("/api/chat", {
