@@ -164,8 +164,8 @@ export default function ChatWindow({
     <div className="flex flex-col h-screen flex-1 min-w-0">
       {/* Topbar (mobile) */}
       <div
-        className="flex md:hidden items-center justify-between px-4 py-3 border-b"
-        style={{ borderColor: "var(--border-color)" }}
+        className="flex md:hidden items-center justify-between px-4 py-3 border-b sticky top-0 z-20 shrink-0"
+        style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-primary)" }}
       >
         <button onClick={onOpenSidebar} className="p-1.5">
           <Menu size={20} />

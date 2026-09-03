@@ -31,7 +31,9 @@ export function useChatHistory() {
       try {
         const parsed: Conversation[] = JSON.parse(raw);
         setConversations(parsed);
-        if (parsed.length > 0) setActiveId(parsed[0].id);
+        // Sengaja TIDAK auto-select percakapan terakhir di sini — user selalu
+        // mendarat di layar "chat baru" saat buka/reload app. Riwayat lama
+        // tetap ada dan bisa diklik dari sidebar.
       } catch {
         // data korup, abaikan
       }
