@@ -51,7 +51,7 @@ async function callGroqText(
       { role: "system", content: systemPrompt },
       ...messages.map((m) => ({ role: m.role, content: m.content })),
     ],
-    max_tokens: 1500,
+    max_tokens: 3000,
   });
   return completion.choices[0]?.message?.content ?? "";
 }
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ...(formattedMessages as any),
         ],
-        max_tokens: 1500,
+        max_tokens: 3000,
         // qwen3.6-27b itu reasoning model, defaultnya nampilin proses
         // "<think>...</think>" di jawaban. "hidden" biar cuma jawaban
         // akhirnya aja yang balik.

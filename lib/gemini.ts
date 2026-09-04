@@ -31,7 +31,7 @@ export async function callGemini(
     contents,
     config: {
       systemInstruction: systemPrompt,
-      maxOutputTokens: 1500,
+      maxOutputTokens: 3000,
       // Google Search grounding: model bisa cari info terkini (harga,
       // berita, jadwal, dll) lewat Google Search sebelum jawab, bukan
       // cuma mengandalkan data training yang sudah lewat cutoff.

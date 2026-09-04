@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2 } from "lucide-react";
 import Logo from "./Logo";
 import { ChatMessage } from "@/lib/useChatHistory";
@@ -14,14 +16,22 @@ interface MessageBubbleProps {
   isRegenerating?: boolean;
 }
 
-// Buang syntax markdown biar enak didengar pas dibacain (TTS), bukan
-// kebaca literal "bintang bintang" dsb.
+// Buang syntax markdown/tabel biar enak didengar pas dibacain (TTS) — nggak
+// kebaca literal "bintang", "garis vertikal" (karakter "|" tabel), dsb.
+// Cuma sisain huruf, angka, dan tanda baca penting buat jeda kalimat.
 function stripMarkdownForSpeech(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, "")
     .replace(/!\[.*?\]\(.*?\)/g, "")
     .replace(/\[([^\]]*)\]\(.*?\)/g, "$1")
-    .replace(/[*_#>`~-]/g, "")
+    .replace(/<br\s*\/?>/gi, ". ")
+    .replace(/<\/?[a-z][^>]*>/gi, "") // tag HTML lain
+    .split("\n")
+    .filter((line) => !/^\s*\|?[\s:|-]+\|?\s*$/.test(line)) // baris separator tabel "|---|---|"
+    .map((line) => line.replace(/\|/g, ", ")) // sel tabel jadi jeda koma, bukan dibaca "garis vertikal"
+    .join("\n")
+    .replace(/[*_#>`~]/g, "")
+    .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
 
@@ -114,6 +124,7 @@ export default function MessageBubble({
             <div className="markdown-body min-w-0">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw, rehypeSanitize]}
                 components={{
                   // Tabel GFM defaultnya nggak respect max-width parent dan
                   // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
