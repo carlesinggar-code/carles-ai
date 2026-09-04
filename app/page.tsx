@@ -20,6 +20,7 @@ export default function Home() {
     createConversation,
     deleteConversation,
     addMessage,
+    updateMessage,
   } = useChatHistory();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -93,7 +94,9 @@ export default function Home() {
       <ChatWindow
         conversation={activeConversation}
         onNewMessage={addMessage}
+        onUpdateMessage={updateMessage}
         onEnsureConversation={handleEnsureConversation}
+        onNewChat={() => createConversation()}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />

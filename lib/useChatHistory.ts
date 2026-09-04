@@ -89,6 +89,26 @@ export function useChatHistory() {
     []
   );
 
+  // Dipakai buat fitur "Ulangi" — ganti isi satu pesan (assistant) di tempat,
+  // tanpa nambah pesan baru.
+  const updateMessage = useCallback(
+    (conversationId: string, messageId: string, newContent: string) => {
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id !== conversationId) return c;
+          return {
+            ...c,
+            messages: c.messages.map((m) =>
+              m.id === messageId ? { ...m, content: newContent } : m
+            ),
+            updatedAt: Date.now(),
+          };
+        })
+      );
+    },
+    []
+  );
+
   return {
     conversations: conversations.sort((a, b) => b.updatedAt - a.updatedAt),
     activeConversation,
@@ -97,5 +117,6 @@ export function useChatHistory() {
     createConversation,
     deleteConversation,
     addMessage,
+    updateMessage,
   };
 }

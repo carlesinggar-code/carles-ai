@@ -1,17 +1,77 @@
 "use client";
 
+import { useState } from "react";
 import { useSession } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2 } from "lucide-react";
 import Logo from "./Logo";
 import { ChatMessage } from "@/lib/useChatHistory";
 
-export default function MessageBubble({ message }: { message: ChatMessage }) {
+interface MessageBubbleProps {
+  message: ChatMessage;
+  onRegenerate?: (messageId: string) => void;
+  isRegenerating?: boolean;
+}
+
+// Buang syntax markdown biar enak didengar pas dibacain (TTS), bukan
+// kebaca literal "bintang bintang" dsb.
+function stripMarkdownForSpeech(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/\[([^\]]*)\]\(.*?\)/g, "$1")
+    .replace(/[*_#>`~-]/g, "")
+    .trim();
+}
+
+export default function MessageBubble({
+  message,
+  onRegenerate,
+  isRegenerating,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const { data: session } = useSession();
+  const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  async function handleShare() {
+    if (navigator.share) {
+      try {
+        await navigator.share({ text: message.content });
+      } catch {
+        // user batal share, biarin aja
+      }
+    } else {
+      handleCopy();
+    }
+  }
+
+  function handleSpeak() {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(stripMarkdownForSpeech(message.content));
+    utterance.lang = "id-ID";
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+    setSpeaking(true);
+  }
 
   return (
-    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
+    <div className={`flex gap-3 min-w-0 ${isUser ? "flex-row-reverse" : ""}`}>
       {isUser ? (
         session?.user?.image ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -32,42 +92,96 @@ export default function MessageBubble({ message }: { message: ChatMessage }) {
         </div>
       )}
 
-      <div
-        className={`max-w-[80%] md:max-w-[70%] min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-          isUser ? "bg-accent text-white rounded-tr-sm" : "rounded-tl-sm"
-        }`}
-        style={!isUser ? { backgroundColor: "var(--bg-secondary)" } : undefined}
-      >
-        {message.image && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={message.image}
-            alt="Lampiran"
-            className="rounded-lg mb-2 max-h-64 object-cover"
-          />
-        )}
+      <div className={`flex flex-col ${isUser ? "items-end" : "items-start"} min-w-0 max-w-[80%] md:max-w-[70%]`}>
+        <div
+          className={`min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+            isUser ? "bg-accent text-white rounded-tr-sm" : "rounded-tl-sm"
+          }`}
+          style={!isUser ? { backgroundColor: "var(--bg-secondary)" } : undefined}
+        >
+          {message.image && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={message.image}
+              alt="Lampiran"
+              className="rounded-lg mb-2 max-h-64 object-cover"
+            />
+          )}
 
-        {isUser ? (
-          <p className="whitespace-pre-wrap">{message.content}</p>
-        ) : (
-          <div className="markdown-body">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                // Tabel GFM defaultnya nggak respect max-width parent dan
-                // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
-                // sendiri, bukan ikut ndorong lebar seluruh chat bubble.
-                table: ({ children, ...props }) => (
-                  <div className="overflow-x-auto max-w-full my-2 -mx-1">
-                    <table {...props} className="text-xs">
-                      {children}
-                    </table>
-                  </div>
-                ),
-              }}
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          ) : (
+            <div className="markdown-body min-w-0">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  // Tabel GFM defaultnya nggak respect max-width parent dan
+                  // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
+                  // sendiri, bukan ikut ndorong lebar seluruh chat bubble.
+                  table: ({ children, ...props }) => (
+                    <div className="overflow-x-auto max-w-full my-2 -mx-1">
+                      <table {...props} className="text-xs">
+                        {children}
+                      </table>
+                    </div>
+                  ),
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          )}
+        </div>
+
+        {/* Toolbar aksi — cuma buat jawaban AI */}
+        {!isUser && (
+          <div className="flex items-center gap-1 mt-1 px-1">
+            <button
+              onClick={handleCopy}
+              className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+              style={{ color: "var(--text-secondary)" }}
+              aria-label="Salin"
+              title="Salin"
             >
-              {message.content}
-            </ReactMarkdown>
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+
+            {onRegenerate && (
+              <button
+                onClick={() => onRegenerate(message.id)}
+                disabled={isRegenerating}
+                className="p-1.5 rounded-lg hover:bg-black/5 transition-colors disabled:opacity-40"
+                style={{ color: "var(--text-secondary)" }}
+                aria-label="Ulangi"
+                title="Ulangi"
+              >
+                {isRegenerating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <RotateCcw size={14} />
+                )}
+              </button>
+            )}
+
+            <button
+              onClick={handleShare}
+              className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+              style={{ color: "var(--text-secondary)" }}
+              aria-label="Bagikan"
+              title="Bagikan"
+            >
+              <Share2 size={14} />
+            </button>
+
+            <button
+              onClick={handleSpeak}
+              className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+              style={{ color: "var(--text-secondary)" }}
+              aria-label={speaking ? "Berhenti" : "Dengarkan"}
+              title={speaking ? "Berhenti" : "Dengarkan"}
+            >
+              {speaking ? <Square size={14} /> : <Volume2 size={14} />}
+            </button>
           </div>
         )}
       </div>

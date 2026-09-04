@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Menu, Settings, Paperclip, X } from "lucide-react";
+import { Send, Menu, Settings, Paperclip, X, SquarePen, Mic, MicOff } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import MessageBubble from "./MessageBubble";
 import Logo from "./Logo";
@@ -11,7 +11,9 @@ import { useLanguage } from "@/context/LanguageContext";
 interface ChatWindowProps {
   conversation: Conversation | null;
   onNewMessage: (conversationId: string, message: ChatMessage) => void;
+  onUpdateMessage: (conversationId: string, messageId: string, content: string) => void;
   onEnsureConversation: () => string;
+  onNewChat: () => void;
   onOpenSettings: () => void;
   onOpenSidebar: () => void;
 }
@@ -19,7 +21,9 @@ interface ChatWindowProps {
 export default function ChatWindow({
   conversation,
   onNewMessage,
+  onUpdateMessage,
   onEnsureConversation,
+  onNewChat,
   onOpenSettings,
   onOpenSidebar,
 }: ChatWindowProps) {
@@ -27,12 +31,27 @@ export default function ChatWindow({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [conversation?.messages.length, loading]);
+
+  // Deteksi dukungan Web Speech API (Chrome/Edge). Kalau nggak didukung,
+  // tombol mic disembunyikan sekalian daripada bikin bingung.
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setVoiceSupported(!!SpeechRecognition);
+  }, []);
 
   const suggestions = [
     t("suggestion1"),
@@ -40,6 +59,48 @@ export default function ChatWindow({
     t("suggestion3"),
     t("suggestion4"),
   ];
+
+  function toggleVoiceInput() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition =
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition = new SpeechRecognition();
+    recognition.lang = lang === "en" ? "en-US" : "id-ID";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+
+    let finalTranscript = "";
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      setInput((finalTranscript + interim).trim());
+    };
+
+    recognition.onerror = () => setIsRecording(false);
+    recognition.onend = () => setIsRecording(false);
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsRecording(true);
+  }
 
   // Foto dari kamera HP bisa 3-8MB+ dalam format asli. Vercel Serverless
   // Function punya limit request body 4.5MB, jadi kita kompres & resize
@@ -160,6 +221,38 @@ export default function ChatWindow({
     }
   }
 
+  // Fitur "Ulangi": kirim ulang pesan user sebelum pesan AI ini, lalu ganti
+  // isi jawaban AI yang lama di tempat (bukan nambah pesan baru).
+  async function handleRegenerate(messageId: string) {
+    if (!conversation || regeneratingId) return;
+    const idx = conversation.messages.findIndex((m) => m.id === messageId);
+    if (idx <= 0) return;
+
+    const historyUpTo = conversation.messages.slice(0, idx);
+    const lastIndex = historyUpTo.length - 1;
+    const history = historyUpTo.map((m, i) => ({
+      role: m.role,
+      content: m.content,
+      image: i === lastIndex ? m.image : undefined,
+    }));
+
+    setRegeneratingId(messageId);
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, lang }),
+      });
+      const data = await res.json();
+      const replyText: string = res.ok ? data.reply : `⚠️ ${data.error ?? t("errorMsg")}`;
+      onUpdateMessage(conversation.id, messageId, replyText || t("errorMsg"));
+    } catch {
+      onUpdateMessage(conversation.id, messageId, `⚠️ ${t("errorMsg")}`);
+    } finally {
+      setRegeneratingId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col h-dvh flex-1 min-w-0">
       {/* Topbar (mobile) */}
@@ -171,13 +264,18 @@ export default function ChatWindow({
           <Menu size={20} />
         </button>
         <Logo size={22} />
-        <button onClick={onOpenSettings} className="p-1.5">
-          <Settings size={20} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={onNewChat} className="p-1.5" aria-label="Percakapan baru" title="Percakapan baru">
+            <SquarePen size={20} />
+          </button>
+          <button onClick={onOpenSettings} className="p-1.5" aria-label={t("settings")} title={t("settings")}>
+            <Settings size={20} />
+          </button>
+        </div>
       </div>
 
       {/* Message area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
         {!conversation || conversation.messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center px-6 text-center">
             <div className="mb-4">
@@ -201,9 +299,14 @@ export default function ChatWindow({
             </div>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          <div className="max-w-3xl mx-auto px-4 py-6 space-y-6 min-w-0">
             {conversation.messages.map((m) => (
-              <MessageBubble key={m.id} message={m} />
+              <MessageBubble
+                key={m.id}
+                message={m}
+                onRegenerate={m.role === "assistant" ? handleRegenerate : undefined}
+                isRegenerating={regeneratingId === m.id}
+              />
             ))}
             {loading && (
               <div className="flex gap-3">
@@ -242,6 +345,13 @@ export default function ChatWindow({
             </div>
           )}
 
+          {isRecording && (
+            <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              Mendengarkan...
+            </div>
+          )}
+
           <div
             className="flex items-end gap-2 rounded-2xl border px-3 py-2"
             style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-secondary)" }}
@@ -275,6 +385,20 @@ export default function ChatWindow({
               rows={1}
               className="flex-1 resize-none bg-transparent outline-none text-sm py-1.5 max-h-32"
             />
+
+            {voiceSupported && (
+              <button
+                onClick={toggleVoiceInput}
+                className={`p-2 rounded-xl transition-colors shrink-0 ${
+                  isRecording ? "bg-red-500 text-white" : "hover:bg-black/5"
+                }`}
+                aria-label={isRecording ? "Berhenti merekam" : "Pesan suara"}
+                title={isRecording ? "Berhenti merekam" : "Pesan suara"}
+              >
+                {isRecording ? <MicOff size={18} /> : <Mic size={18} style={{ color: "var(--text-secondary)" }} />}
+              </button>
+            )}
+
             <button
               onClick={() => handleSend()}
               disabled={loading || (!input.trim() && !pendingImage)}

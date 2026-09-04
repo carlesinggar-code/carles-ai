@@ -9,9 +9,9 @@ interface CreatorModalProps {
 // Ganti/tambah link project kamu di sini — tinggal edit array ini,
 // bisa lebih atau kurang dari 3.
 const PROJECT_LINKS: { label: string; url: string }[] = [
-  { label: "Project 1", url: "https://github.com/carlesinggar-code" },
-  { label: "Project 2", url: "https://carlesinggar.itch.io/battle-slime" },
-  { label: "Project 3", url: "https://suryaabaditransindo.com" },
+  { label: "Github", url: "https://github.com/carlesinggar-code" },
+  { label: "Game", url: "https://carlesinggar.itch.io/battle-slime" },
+  { label: "Website", url: "https://suryaabaditransindo.com" },
 ];
 
 // Format internasional tanpa tanda "+" dan tanpa angka 0 di depan

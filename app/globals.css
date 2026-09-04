@@ -49,6 +49,10 @@
   --border-color: #e3e5e8;
 }
 
+html, body {
+  overflow-x: hidden;
+}
+
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
