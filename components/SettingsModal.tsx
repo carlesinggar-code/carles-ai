@@ -1,9 +1,15 @@
 "use client";
 
-import { X, Check } from "lucide-react";
+import { useState } from "react";
+import { X, Check, User, Download, ChevronRight } from "lucide-react";
 import { useTheme, ColorTheme, Mode } from "@/context/ThemeContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { Lang } from "@/lib/translations";
+import CreatorModal from "./CreatorModal";
+
+// Setelah APK jadi, ganti "#" ini dengan link download-nya (Google Drive,
+// GitHub Releases, hosting sendiri, dll).
+const APP_DOWNLOAD_URL = "#";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -12,6 +18,7 @@ interface SettingsModalProps {
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { colorTheme, setColorTheme, mode, setMode } = useTheme();
   const { lang, setLang, t } = useLanguage();
+  const [showCreator, setShowCreator] = useState(false);
 
   const colorOptions: { id: ColorTheme; label: string; swatch: string }[] = [
     { id: "blue", label: t("blue"), swatch: "#2563eb" },
@@ -122,7 +129,34 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             ))}
           </div>
         </div>
+        {/* Lainnya */}
+        <div className="mt-6 pt-5 border-t" style={{ borderColor: "var(--border-color)" }}>
+          <p className="text-sm font-medium mb-3">Lainnya</p>
+          <div className="space-y-2">
+            <button
+              onClick={() => setShowCreator(true)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-opacity hover:opacity-80"
+              style={{ backgroundColor: "var(--bg-secondary)" }}
+            >
+              <User size={18} className="text-accent shrink-0" />
+              <span className="text-sm flex-1 text-left">Tentang Pembuat</span>
+              <ChevronRight size={16} className="opacity-40" />
+            </button>
+
+            <a
+              href={APP_DOWNLOAD_URL}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-opacity hover:opacity-80"
+              style={{ backgroundColor: "var(--bg-secondary)" }}
+            >
+              <Download size={18} className="text-accent shrink-0" />
+              <span className="text-sm flex-1 text-left">Unduh App</span>
+              <span className="text-xs opacity-50">Segera hadir</span>
+            </a>
+          </div>
+        </div>
       </div>
+
+      {showCreator && <CreatorModal onClose={() => setShowCreator(false)} />}
     </div>
   );
 }

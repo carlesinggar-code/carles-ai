@@ -43,7 +43,7 @@ export default function Home() {
   }
 
   return (
-    <main className="flex h-screen overflow-hidden">
+    <main className="flex h-dvh overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeId}

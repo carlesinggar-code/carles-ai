@@ -161,7 +161,7 @@ export default function ChatWindow({
   }
 
   return (
-    <div className="flex flex-col h-screen flex-1 min-w-0">
+    <div className="flex flex-col h-dvh flex-1 min-w-0">
       {/* Topbar (mobile) */}
       <div
         className="flex md:hidden items-center justify-between px-4 py-3 border-b sticky top-0 z-20 shrink-0"

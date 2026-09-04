@@ -35,7 +35,7 @@ export default function Sidebar({
     <aside
       className={`${
         variant === "mobile" ? "flex w-72" : "hidden md:flex md:w-72"
-      } flex-col h-screen border-r shrink-0`}
+      } flex-col h-dvh border-r shrink-0`}
       style={{
         backgroundColor: "var(--bg-sidebar)",
         borderColor: "var(--border-color)",
