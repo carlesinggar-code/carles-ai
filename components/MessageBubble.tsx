@@ -112,10 +112,10 @@ export default function MessageBubble({
     speakNext();
   }
 
-  return (
-    <div className={`flex gap-3 min-w-0 ${isUser ? "flex-row-reverse" : ""}`}>
-      {isUser ? (
-        session?.user?.image ? (
+  if (isUser) {
+    return (
+      <div className="flex gap-3 min-w-0 flex-row-reverse">
+        {session?.user?.image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={session.user.image}
@@ -127,19 +127,37 @@ export default function MessageBubble({
           <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center shrink-0 text-white text-xs font-medium">
             {session?.user?.name?.[0] ?? "U"}
           </div>
-        )
-      ) : (
-        <div className="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
-          <Logo size={18} withText={false} />
+        )}
+        <div className="flex flex-col items-end min-w-0 max-w-[80%] md:max-w-[70%]">
+          <div className="min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed bg-accent text-white rounded-tr-sm">
+            {message.image && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={message.image}
+                alt="Lampiran"
+                className="rounded-lg mb-2 max-h-64 object-cover"
+              />
+            )}
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
-      <div className={`flex flex-col ${isUser ? "items-end" : "items-start"} min-w-0 max-w-[80%] md:max-w-[70%]`}>
+  // Jawaban AI: logo ditaruh DI ATAS (bukan di samping), bubble-nya pakai
+  // lebar penuh — biar tabel/konten lebar dapet ruang semaksimal mungkin
+  // di layar sempit, bukan ke-batasin 80% + kepotong avatar di samping.
+  return (
+    <div className="min-w-0">
+      <div className="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center shrink-0 mb-1.5">
+        <Logo size={18} withText={false} />
+      </div>
+
+      <div className="flex flex-col items-start min-w-0 w-full">
         <div
-          className={`min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-            isUser ? "bg-accent text-white rounded-tr-sm" : "rounded-tl-sm"
-          }`}
-          style={!isUser ? { backgroundColor: "var(--bg-secondary)" } : undefined}
+          className="min-w-0 w-full rounded-2xl px-4 py-3 text-sm leading-relaxed rounded-tl-sm"
+          style={{ backgroundColor: "var(--bg-secondary)" }}
         >
           {message.image && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -150,35 +168,30 @@ export default function MessageBubble({
             />
           )}
 
-          {isUser ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
-          ) : (
-            <div className="markdown-body min-w-0">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw, rehypeSanitize]}
-                components={{
-                  // Tabel GFM defaultnya nggak respect max-width parent dan
-                  // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
-                  // sendiri, bukan ikut ndorong lebar seluruh chat bubble.
-                  table: ({ children, ...props }) => (
-                    <div className="overflow-x-auto max-w-full my-2 -mx-1">
-                      <table {...props} className="text-xs">
-                        {children}
-                      </table>
-                    </div>
-                  ),
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
-            </div>
-          )}
+          <div className="markdown-body min-w-0">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw, rehypeSanitize]}
+              components={{
+                // Tabel GFM defaultnya nggak respect max-width parent dan
+                // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
+                // sendiri, bukan ikut ndorong lebar seluruh chat bubble.
+                table: ({ children, ...props }) => (
+                  <div className="overflow-x-auto max-w-full my-2 -mx-1">
+                    <table {...props} className="text-xs">
+                      {children}
+                    </table>
+                  </div>
+                ),
+              }}
+            >
+              {message.content}
+            </ReactMarkdown>
+          </div>
         </div>
 
-        {/* Toolbar aksi — cuma buat jawaban AI */}
-        {!isUser && (
-          <div className="flex items-center gap-1 mt-1 px-1">
+        {/* Toolbar aksi */}
+        <div className="flex items-center gap-1 mt-1 px-1">
             <button
               onClick={handleCopy}
               className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
@@ -225,8 +238,7 @@ export default function MessageBubble({
             >
               {speaking ? <Square size={14} /> : <Volume2 size={14} />}
             </button>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );
