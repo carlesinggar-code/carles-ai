@@ -72,12 +72,44 @@ export default function MessageBubble({
       return;
     }
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(stripMarkdownForSpeech(message.content));
-    utterance.lang = "id-ID";
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utterance);
+
+    const fullText = stripMarkdownForSpeech(message.content);
+
+    // Chrome (termasuk di Android/WebView) punya bug lama: utterance yang
+    // kepanjangan suka berhenti sendiri di tengah atau gagal total diam-diam.
+    // Solusinya: pecah jadi potongan per kalimat, dibacain berurutan
+    // (nyambung otomatis pakai onend), bukan 1 utterance raksasa.
+    const sentences = fullText.match(/[^.!?\n]+[.!?\n]*/g) ?? [fullText];
+    const chunks: string[] = [];
+    let current = "";
+    for (const sentence of sentences) {
+      if ((current + sentence).length > 180 && current) {
+        chunks.push(current.trim());
+        current = sentence;
+      } else {
+        current += sentence;
+      }
+    }
+    if (current.trim()) chunks.push(current.trim());
+
+    let index = 0;
+    function speakNext() {
+      if (index >= chunks.length) {
+        setSpeaking(false);
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      utterance.lang = "id-ID";
+      utterance.onend = () => {
+        index += 1;
+        speakNext();
+      };
+      utterance.onerror = () => setSpeaking(false);
+      window.speechSynthesis.speak(utterance);
+    }
+
     setSpeaking(true);
+    speakNext();
   }
 
   return (
