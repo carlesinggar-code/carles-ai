@@ -1,15 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X, Check, User, Download, ChevronRight } from "lucide-react";
 import { useTheme, ColorTheme, Mode } from "@/context/ThemeContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { Lang } from "@/lib/translations";
 import CreatorModal from "./CreatorModal";
-
-// Setelah APK jadi, ganti "#" ini dengan link download-nya (Google Drive,
-// GitHub Releases, hosting sendiri, dll).
-const APP_DOWNLOAD_URL = "#";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -19,6 +15,14 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { colorTheme, setColorTheme, mode, setMode } = useTheme();
   const { lang, setLang, t } = useLanguage();
   const [showCreator, setShowCreator] = useState(false);
+  const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/apk-info")
+      .then((res) => res.json())
+      .then(setApkInfo)
+      .catch(() => setApkInfo({ available: false }));
+  }, []);
 
   const colorOptions: { id: ColorTheme; label: string; swatch: string }[] = [
     { id: "blue", label: t("blue"), swatch: "#2563eb" },
@@ -143,15 +147,27 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               <ChevronRight size={16} className="opacity-40" />
             </button>
 
-            <a
-              href={APP_DOWNLOAD_URL}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-opacity hover:opacity-80"
-              style={{ backgroundColor: "var(--bg-secondary)" }}
-            >
-              <Download size={18} className="text-accent shrink-0" />
-              <span className="text-sm flex-1 text-left">Unduh App</span>
-              <span className="text-xs opacity-50">Segera hadir</span>
-            </a>
+            {apkInfo?.available ? (
+              <a
+                href="/carles-ai.apk"
+                download="Carles.ai.apk"
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-opacity hover:opacity-80"
+                style={{ backgroundColor: "var(--bg-secondary)" }}
+              >
+                <Download size={18} className="text-accent shrink-0" />
+                <span className="text-sm flex-1 text-left">Unduh App</span>
+                <span className="text-xs opacity-50">{apkInfo.sizeMB} MB</span>
+              </a>
+            ) : (
+              <div
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl opacity-50"
+                style={{ backgroundColor: "var(--bg-secondary)" }}
+              >
+                <Download size={18} className="shrink-0" />
+                <span className="text-sm flex-1 text-left">Unduh App</span>
+                <span className="text-xs">Segera hadir</span>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -6,12 +6,11 @@ interface CreatorModalProps {
   onClose: () => void;
 }
 
-// Ganti/tambah link project kamu di sini — tinggal edit array ini,
-// bisa lebih atau kurang dari 3.
 const PROJECT_LINKS: { label: string; url: string }[] = [
   { label: "Github", url: "https://github.com/carlesinggar-code" },
   { label: "Game", url: "https://carlesinggar.itch.io/battle-slime" },
   { label: "Website", url: "https://suryaabaditransindo.com" },
+  { label: "Instagram", url: "https://www.instagram.com/carles_inggar" },
 ];
 
 // Format internasional tanpa tanda "+" dan tanpa angka 0 di depan
