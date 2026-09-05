@@ -18,7 +18,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string } | null>(null);
 
   useEffect(() => {
-    fetch("/api/apk-info")
+    fetch("/api/apk-info", { cache: "no-store" })
       .then((res) => res.json())
       .then(setApkInfo)
       .catch(() => setApkInfo({ available: false }));
