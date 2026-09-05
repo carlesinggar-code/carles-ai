@@ -18,6 +18,7 @@ export default function Home() {
     activeId,
     setActiveId,
     createConversation,
+    goToNewChat,
     deleteConversation,
     addMessage,
     updateMessage,
@@ -53,7 +54,7 @@ export default function Home() {
           setMobileSidebarOpen(false);
         }}
         onNewChat={() => {
-          createConversation();
+          goToNewChat();
           setMobileSidebarOpen(false);
         }}
         onDelete={deleteConversation}
@@ -77,7 +78,7 @@ export default function Home() {
                 setMobileSidebarOpen(false);
               }}
               onNewChat={() => {
-                createConversation();
+                goToNewChat();
                 setMobileSidebarOpen(false);
               }}
               onDelete={deleteConversation}
@@ -96,7 +97,7 @@ export default function Home() {
         onNewMessage={addMessage}
         onUpdateMessage={updateMessage}
         onEnsureConversation={handleEnsureConversation}
-        onNewChat={() => createConversation()}
+        onNewChat={() => goToNewChat()}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenSidebar={() => setMobileSidebarOpen(true)}
       />

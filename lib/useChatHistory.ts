@@ -60,6 +60,15 @@ export function useChatHistory() {
     return newConvo.id;
   }, []);
 
+  // Dipakai tombol "Percakapan Baru": cuma reset TAMPILAN ke kosong, TANPA
+  // bikin entri history baru. Entri history beneran baru dibuat pas pesan
+  // pertama dikirim (lewat createConversation, dipanggil dari
+  // handleEnsureConversation). Ini yang mencegah history numpuk banyak
+  // "Percakapan Baru" kosong kalau tombolnya diklik berkali-kali.
+  const goToNewChat = useCallback(() => {
+    setActiveId(null);
+  }, []);
+
   const deleteConversation = useCallback(
     (id: string) => {
       setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -115,6 +124,7 @@ export function useChatHistory() {
     activeId,
     setActiveId,
     createConversation,
+    goToNewChat,
     deleteConversation,
     addMessage,
     updateMessage,

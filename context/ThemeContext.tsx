@@ -35,10 +35,20 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Terapkan ke <html> setiap kali berubah
+  // Terapkan ke <html> setiap kali berubah + update warna status bar (theme-color)
+  // biar nyambung sama tampilan light/dark, bukan cuma warna tetap.
   useEffect(() => {
     document.documentElement.setAttribute("data-color-theme", colorTheme);
     document.documentElement.setAttribute("data-mode", mode);
+
+    const themeColorValue = mode === "dark" ? "#16181c" : "#ffffff";
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute("content", themeColorValue);
   }, [colorTheme, mode]);
 
   const setColorTheme = (t: ColorTheme) => {
