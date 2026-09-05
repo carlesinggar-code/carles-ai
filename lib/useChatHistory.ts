@@ -18,15 +18,22 @@ export interface Conversation {
   updatedAt: number;
 }
 
-const STORAGE_KEY = "trip-assistant-conversations";
+const STORAGE_KEY_PREFIX = "trip-assistant-conversations";
 
-export function useChatHistory() {
+// Riwayat chat sekarang di-scope per akun (pakai email user) — bukan satu
+// kunci global — biar kalau ganti akun Google di device/browser yang sama,
+// riwayatnya nggak kecampur.
+export function useChatHistory(userEmail: string | null | undefined) {
+  const storageKey = userEmail
+    ? `${STORAGE_KEY_PREFIX}:${userEmail}`
+    : STORAGE_KEY_PREFIX;
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Load dari localStorage saat mount
+  // Load dari localStorage saat mount ATAU saat akun (userEmail) berubah
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (raw) {
       try {
         const parsed: Conversation[] = JSON.parse(raw);
@@ -37,13 +44,18 @@ export function useChatHistory() {
       } catch {
         // data korup, abaikan
       }
+    } else {
+      // Akun ini belum punya riwayat tersimpan — kosongkan (penting pas
+      // ganti akun di sesi yang sama, biar nggak nyisa punya akun sebelumnya)
+      setConversations([]);
     }
-  }, []);
+    setActiveId(null);
+  }, [storageKey]);
 
   // Simpan setiap kali berubah
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  }, [conversations]);
+    localStorage.setItem(storageKey, JSON.stringify(conversations));
+  }, [conversations, storageKey]);
 
   const activeConversation =
     conversations.find((c) => c.id === activeId) ?? null;

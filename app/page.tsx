@@ -22,7 +22,7 @@ export default function Home() {
     deleteConversation,
     addMessage,
     updateMessage,
-  } = useChatHistory();
+  } = useChatHistory(session?.user?.email);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
