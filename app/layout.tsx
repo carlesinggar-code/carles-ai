@@ -7,9 +7,15 @@ export const metadata: Metadata = {
   description: "Carles.ai, asisten AI yang siap membantu apapun yang kamu butuhkan.",
 };
 
-// Fallback default (gelap) sebelum ThemeContext sempat jalan di client dan
-// nyesuain ke light/dark pilihan user.
+// PENTING: width & initialScale WAJIB ada di sini. Next.js otomatis nyertain
+// viewport responsive (width=device-width) secara default, tapi begitu kita
+// bikin export "viewport" sendiri (buat themeColor), itu MENGGANTIKAN
+// default itu sepenuhnya — kalau nggak disertain manual lagi, HP jadi render
+// halaman di lebar virtual desktop (980px) lalu di-zoom out, sehingga semua
+// konten kelihatan "kepotong"/nembus di layar kecil.
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
   themeColor: "#16181c",
 };
 
