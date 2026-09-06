@@ -24,6 +24,34 @@ export interface Conversation {
 }
 
 const STORAGE_KEY_PREFIX = "trip-assistant-conversations";
+// Riwayat lama (sebelum fix) bisa nyimpen gambar/file base64 utuh yang
+// gede banget. Kalau nemu field segede ini pas load, dianggap "sampah lama"
+// dan dibuang isinya (cuma disisain placeholder), biar nggak numpuk terus
+// bikin localStorage penuh (QuotaExceededError).
+const MAX_STORED_ATTACHMENT_CHARS = 60000;
+
+function cleanupOversizedAttachments(conversations: Conversation[]): {
+  cleaned: Conversation[];
+  changed: boolean;
+} {
+  let changed = false;
+  const cleaned = conversations.map((c) => ({
+    ...c,
+    messages: c.messages.map((m) => {
+      let next = m;
+      if (next.image && next.image.length > MAX_STORED_ATTACHMENT_CHARS) {
+        changed = true;
+        next = { ...next, image: undefined };
+      }
+      if (next.file?.data && next.file.data.length > 0) {
+        changed = true;
+        next = { ...next, file: { name: next.file.name, mimeType: next.file.mimeType } };
+      }
+      return next;
+    }),
+  }));
+  return { cleaned, changed };
+}
 
 // Riwayat chat sekarang di-scope per akun (pakai email user) — bukan satu
 // kunci global — biar kalau ganti akun Google di device/browser yang sama,
@@ -42,7 +70,18 @@ export function useChatHistory(userEmail: string | null | undefined) {
     if (raw) {
       try {
         const parsed: Conversation[] = JSON.parse(raw);
-        setConversations(parsed);
+        // Bersihin lampiran gede peninggalan sebelum fix storage. Ini yang
+        // "menyembuhkan" akun yang udah kepalang kena QuotaExceededError.
+        const { cleaned, changed } = cleanupOversizedAttachments(parsed);
+        setConversations(cleaned);
+        if (changed) {
+          try {
+            localStorage.setItem(storageKey, JSON.stringify(cleaned));
+          } catch {
+            // kalau masih gagal simpen juga, biarin — minimal state di
+            // memori udah bersih buat sesi ini
+          }
+        }
         // Sengaja TIDAK auto-select percakapan terakhir di sini — user selalu
         // mendarat di layar "chat baru" saat buka/reload app. Riwayat lama
         // tetap ada dan bisa diklik dari sidebar.
@@ -57,9 +96,15 @@ export function useChatHistory(userEmail: string | null | undefined) {
     setActiveId(null);
   }, [storageKey]);
 
-  // Simpan setiap kali berubah
+  // Simpan setiap kali berubah. Dibungkus try/catch — kalau suatu saat
+  // masih kena quota juga (kasus ekstrem), minimal nggak bikin app crash;
+  // percakapan tetap jalan di memori untuk sesi ini.
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify(conversations));
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(conversations));
+    } catch (err) {
+      console.error("Gagal simpan riwayat chat ke localStorage:", err);
+    }
   }, [conversations, storageKey]);
 
   const activeConversation =
