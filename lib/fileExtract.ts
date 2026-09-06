@@ -61,9 +61,15 @@ async function ocrPdf(buffer: Buffer, totalPages: number): Promise<string> {
   for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
     try {
       const imageBuffer = await renderPageAsImage(new Uint8Array(buffer), pageNum, {
+        // unpdf: opsi ini secara RUNTIME namanya "canvasImport" (sudah
+        // divalidasi jalan), tapi file tipe TypeScript versi ini masih
+        // nulis "canvas" — ketidakcocokan bug di package-nya sendiri.
+        // "as any" di sini cuma buat lewatin type-check, perilaku aslinya
+        // tetap benar.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         canvasImport: () => import("@napi-rs/canvas"),
         scale: 1.5,
-      });
+      } as any);
       const pageText = await ocrImageBuffer(imageBuffer);
       results.push(`--- Halaman ${pageNum} ---\n${pageText}`);
     } catch (err) {
