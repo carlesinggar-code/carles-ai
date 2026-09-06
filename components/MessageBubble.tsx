@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
-import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2 } from "lucide-react";
+import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2, FileText } from "lucide-react";
 import Logo from "./Logo";
 import { ChatMessage } from "@/lib/useChatHistory";
 
@@ -137,6 +137,12 @@ export default function MessageBubble({
                 alt="Lampiran"
                 className="rounded-lg mb-2 max-h-64 object-cover"
               />
+            )}
+            {message.file && (
+              <div className="flex items-center gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-white/15 text-xs min-w-0">
+                <FileText size={14} className="shrink-0" />
+                <span className="truncate min-w-0">{message.file.name}</span>
+              </div>
             )}
             <p className="whitespace-pre-wrap">{message.content}</p>
           </div>

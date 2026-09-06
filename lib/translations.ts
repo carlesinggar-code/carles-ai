@@ -29,7 +29,7 @@ export const translations = {
     thinking: "Sedang menyusun jawaban...",
     deleteChat: "Hapus percakapan",
     errorMsg: "Maaf, terjadi kesalahan saat menghubungi AI. Silakan coba lagi.",
-    attachImage: "Lampirkan gambar",
+    attachImage: "Lampirkan gambar atau file",
     removeImage: "Hapus gambar",
   },
   en: {
@@ -60,7 +60,7 @@ export const translations = {
     thinking: "Thinking...",
     deleteChat: "Delete chat",
     errorMsg: "Sorry, something went wrong while contacting the AI. Please try again.",
-    attachImage: "Attach image",
+    attachImage: "Attach image or file",
     removeImage: "Remove image",
   },
 };

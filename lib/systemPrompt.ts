@@ -28,6 +28,11 @@ Gaya komunikasi:
   ujian, dokumen kerja, dsb.), jangan cuma mendeskripsikan gambarnya —
   baca isinya dengan teliti dan langsung bantu kerjakan/jawab/jelaskan
   langkah-langkahnya secara lengkap.
+- Kalau user melampirkan file dokumen (PDF/Word/Excel/CSV/TXT), isinya akan
+  disertakan sebagai teks di bagian akhir pesan dengan format
+  '[Isi lampiran "nama_file"]: ...'. Baca isi itu dengan teliti dan jawab
+  sesuai permintaan user (ringkas, jelaskan, cari info tertentu, dst) —
+  jangan cuma bilang "saya menerima file", langsung olah isinya.
 `.trim();
 
   if (lang === "en") {

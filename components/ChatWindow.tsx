@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Menu, Settings, Paperclip, X, SquarePen, Mic, MicOff } from "lucide-react";
+import { Send, Menu, Settings, Paperclip, X, SquarePen, Mic, MicOff, FileText } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
 import MessageBubble from "./MessageBubble";
 import Logo from "./Logo";
@@ -31,6 +31,7 @@ export default function ChatWindow({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<{ name: string; mimeType: string; data: string } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
@@ -143,40 +144,115 @@ export default function ChatWindow({
     });
   }
 
+  const DOCUMENT_ACCEPT_TYPES = [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "text/csv",
+    "text/plain",
+  ];
+  const MAX_DOCUMENT_BYTES = 4 * 1024 * 1024; // 4MB — jaga-jaga limit body Vercel (4.5MB)
+
+  function readFileAsBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(",")[1] ?? "");
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleIncomingFile(file: File) {
+    if (file.type.startsWith("image/")) {
+      try {
+        const compressed = await compressImage(file);
+        setPendingImage(compressed);
+        setPendingFile(null);
+      } catch {
+        // Fallback: kalau kompresi gagal, pakai file asli (lebih baik daripada
+        // gagal total, meskipun berisiko kena limit ukuran).
+        const reader = new FileReader();
+        reader.onload = () => setPendingImage(reader.result as string);
+        reader.readAsDataURL(file);
+      }
+      return;
+    }
+
+    // Dokumen (PDF/Word/Excel/CSV/TXT)
+    const isSupported =
+      DOCUMENT_ACCEPT_TYPES.includes(file.type) ||
+      /\.(pdf|docx?|xlsx?|csv|txt)$/i.test(file.name);
+    if (!isSupported) {
+      alert("Format file belum didukung. Coba PDF, Word (.docx), Excel (.xlsx), CSV, atau TXT.");
+      return;
+    }
+    if (file.size > MAX_DOCUMENT_BYTES) {
+      alert("Ukuran file kemaksimalan 4MB. Coba file yang lebih kecil.");
+      return;
+    }
+    const base64 = await readFileAsBase64(file);
+    setPendingFile({ name: file.name, mimeType: file.type || "application/octet-stream", data: base64 });
+    setPendingImage(null);
+  }
+
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) return;
+    await handleIncomingFile(file);
+  }
 
-    try {
-      const compressed = await compressImage(file);
-      setPendingImage(compressed);
-    } catch {
-      // Fallback: kalau kompresi gagal, pakai file asli (lebih baik daripada
-      // gagal total, meskipun berisiko kena limit ukuran).
-      const reader = new FileReader();
-      reader.onload = () => setPendingImage(reader.result as string);
-      reader.readAsDataURL(file);
+  // Drag & drop: bisa drag gambar/dokumen langsung dari folder ke area chat
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.types.includes("Files")) setIsDraggingOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingOver(false);
     }
+  }
+
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDraggingOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    await handleIncomingFile(file);
   }
 
   async function handleSend(text?: string) {
     const content = (text ?? input).trim();
-    if ((!content && !pendingImage) || loading) return;
+    if ((!content && !pendingImage && !pendingFile) || loading) return;
 
     const convoId = conversation?.id ?? onEnsureConversation();
 
     const userMessage: ChatMessage = {
       id: uuidv4(),
       role: "user",
-      content: content || "(gambar terlampir)",
+      content: content || (pendingFile ? `(file terlampir: ${pendingFile.name})` : "(gambar terlampir)"),
       image: pendingImage ?? undefined,
+      file: pendingFile ?? undefined,
       createdAt: Date.now(),
     };
     onNewMessage(convoId, userMessage);
     setInput("");
     setPendingImage(null);
+    setPendingFile(null);
     setLoading(true);
 
     try {
@@ -185,10 +261,12 @@ export default function ChatWindow({
       const history = fullHistory.map((m, i) => ({
         role: m.role,
         content: m.content,
-        // Cuma sertakan gambar untuk pesan TERAKHIR. Gambar lama di history
-        // nggak perlu dikirim ulang tiap request (AI udah "komentar" soal itu
-        // di balasan sebelumnya) — ini yang bikin payload membengkak & error.
+        // Cuma sertakan gambar/file untuk pesan TERAKHIR. Lampiran lama di
+        // history nggak perlu dikirim ulang tiap request (AI udah "komentar"
+        // soal itu di balasan sebelumnya) — ini yang bikin payload
+        // membengkak & error.
         image: i === lastIndex ? m.image : undefined,
+        file: i === lastIndex ? m.file : m.file ? { name: m.file.name, mimeType: m.file.mimeType } : undefined,
       }));
 
       const res = await fetch("/api/chat", {
@@ -234,6 +312,7 @@ export default function ChatWindow({
       role: m.role,
       content: m.content,
       image: i === lastIndex ? m.image : undefined,
+      file: i === lastIndex ? m.file : m.file ? { name: m.file.name, mimeType: m.file.mimeType } : undefined,
     }));
 
     setRegeneratingId(messageId);
@@ -254,7 +333,26 @@ export default function ChatWindow({
   }
 
   return (
-    <div className="flex flex-col h-full flex-1 min-w-0">
+    <div
+      className="relative flex flex-col h-full flex-1 min-w-0"
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDraggingOver && (
+        <div
+          className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none border-4 border-dashed rounded-lg m-2"
+          style={{ borderColor: "var(--accent)", backgroundColor: "rgba(37, 99, 235, 0.1)" }}
+        >
+          <div
+            className="px-6 py-4 rounded-2xl text-sm font-medium shadow-lg"
+            style={{ backgroundColor: "var(--bg-primary)" }}
+          >
+            📎 Lepas file di sini untuk melampirkan
+          </div>
+        </div>
+      )}
       {/* Topbar (mobile) */}
       <div
         className="flex md:hidden items-center justify-between px-4 py-3 border-b sticky top-0 z-20 shrink-0"
@@ -345,6 +443,23 @@ export default function ChatWindow({
             </div>
           )}
 
+          {pendingFile && (
+            <div
+              className="flex items-center gap-2 mb-2 px-3 py-2 rounded-xl border text-xs w-fit max-w-full min-w-0"
+              style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-secondary)" }}
+            >
+              <FileText size={16} className="text-accent shrink-0" />
+              <span className="truncate min-w-0">{pendingFile.name}</span>
+              <button
+                onClick={() => setPendingFile(null)}
+                className="w-4 h-4 rounded-full bg-black/40 text-white flex items-center justify-center shrink-0"
+                aria-label="Hapus file"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          )}
+
           {isRecording && (
             <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -359,7 +474,7 @@ export default function ChatWindow({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -401,7 +516,7 @@ export default function ChatWindow({
 
             <button
               onClick={() => handleSend()}
-              disabled={loading || (!input.trim() && !pendingImage)}
+              disabled={loading || (!input.trim() && !pendingImage && !pendingFile)}
               className="p-2 rounded-xl bg-accent text-white disabled:opacity-40 transition-opacity shrink-0"
               aria-label={t("send")}
             >

@@ -3,13 +3,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildSystemPrompt } from "@/lib/systemPrompt";
 import { Lang } from "@/lib/translations";
 import { callGemini } from "@/lib/gemini";
+import { extractTextFromFile } from "@/lib/fileExtract";
 
 export const runtime = "nodejs";
+// OCR PDF hasil scan bisa proses beberapa halaman berurutan (tiap halaman
+// = 1 pemanggilan model vision) — kasih waktu lebih lega dari default,
+// 60 detik ini juga batas maksimal di plan Vercel Hobby.
+export const maxDuration = 60;
 
 interface IncomingMessage {
   role: "user" | "assistant";
   content: string;
   image?: string;
+  file?: { name: string; mimeType: string; data?: string };
 }
 
 // Model teks biasa (Groq): cepat & murah, dipakai kalau tidak ada gambar
@@ -68,6 +74,28 @@ export async function POST(req: NextRequest) {
 
     const systemPrompt = buildSystemPrompt(lang);
     const hasImage = messages.some((m) => !!m.image);
+
+    // --- Ada file dokumen (PDF/Word/Excel/CSV/TXT) dilampirkan: ekstrak
+    // teksnya dulu di sini, gabungkan ke content pesannya. Setelah ini,
+    // pesan tersebut jadi teks biasa — jalan lewat pipeline yang sama
+    // persis kayak chat teks normal (Gemini→Groq fallback), nggak perlu
+    // model/provider khusus buat file.
+    const fileMessage = messages.find((m) => m.file?.data);
+    if (fileMessage?.file?.data) {
+      try {
+        const extractedText = await extractTextFromFile(
+          fileMessage.file.mimeType,
+          fileMessage.file.data,
+          fileMessage.file.name
+        );
+        fileMessage.content = `${fileMessage.content}\n\n[Isi lampiran "${fileMessage.file.name}"]:\n${extractedText}`;
+      } catch (err) {
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : "Gagal membaca file lampiran." },
+          { status: 400 }
+        );
+      }
+    }
 
     // --- Ada gambar: tetap lewat Groq vision model (Gemini belum di-hook di sini) ---
     if (hasImage) {

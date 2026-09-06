@@ -8,6 +8,11 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   image?: string; // base64 data URL, kalau user melampirkan gambar
+  file?: {
+    name: string;
+    mimeType: string;
+    data?: string; // base64 (tanpa prefix data URL) — cuma disimpan buat pesan TERAKHIR, lihat catatan di ChatWindow
+  };
   createdAt: number;
 }
 
