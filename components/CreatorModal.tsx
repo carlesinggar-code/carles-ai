@@ -1,16 +1,39 @@
 "use client";
 
-import { X, MessageCircle, Sparkles, ExternalLink } from "lucide-react";
+import {
+  X,
+  MessageCircle,
+  Instagram,
+  Linkedin,
+  Github,
+  Mail,
+  Sparkles,
+  ExternalLink,
+  Clock,
+} from "lucide-react";
 
 interface CreatorModalProps {
   onClose: () => void;
 }
 
 const PROJECT_LINKS: { label: string; url: string }[] = [
-  { label: "Github", url: "https://github.com/carlesinggar-code" },
-  { label: "Game", url: "https://carlesinggar.itch.io/battle-slime" },
-  { label: "Website", url: "https://suryaabaditransindo.com" },
-  { label: "Instagram", url: "https://www.instagram.com/carles_inggar" },
+  { label: "Website — Surya Abadi Transindo", url: "https://suryaabaditransindo.com" },
+  { label: "Website — Zun Tour & Travel", url: "https://zuntourtravel.smkmodels.id" },
+  { label: "Game — Battle Slime", url: "https://carlesinggar.itch.io/battle-slime" },
+  { label: "Game — Word Game", url: "https://carlesinggar-code.github.io/word-game/" },
+  { label: "App & AI — Carles.ai", url: "https://carles-ai.vercel.app" },
+];
+
+const UPCOMING_PROJECTS = [
+  { label: "Carles Convert", desc: "Ubah ukuran, format & resolusi gambar/file" },
+  { label: "Web Healthy", desc: "Analisis SEO, UI/UX & kecepatan website lain" },
+];
+
+const CONTACTS = [
+  { label: "Instagram", value: "@carles_inggar", url: "https://www.instagram.com/carles_inggar", icon: Instagram },
+  { label: "LinkedIn", value: "carles-inggar", url: "https://www.linkedin.com/in/carles-inggar/", icon: Linkedin },
+  { label: "GitHub", value: "carlesinggar-code", url: "https://github.com/carlesinggar-code", icon: Github },
+  { label: "Email", value: "carlesinggar@gmail.com", url: "mailto:carlesinggar@gmail.com", icon: Mail },
 ];
 
 // Format internasional tanpa tanda "+" dan tanpa angka 0 di depan
@@ -43,7 +66,7 @@ export default function CreatorModal({ onClose }: CreatorModalProps) {
             CI
           </div>
           <p className="font-semibold text-base">Carles Inggar Nur Cahya</p>
-          <p className="text-sm opacity-70 mt-1">Pembuat Carles.ai</p>
+          <p className="text-sm opacity-70 mt-1">Kerap disapa &ldquo;Carles&rdquo; — Pembuat Carles.ai</p>
         </div>
 
         <div className="space-y-3 mb-5">
@@ -51,10 +74,10 @@ export default function CreatorModal({ onClose }: CreatorModalProps) {
             className="rounded-xl px-4 py-3"
             style={{ backgroundColor: "var(--bg-secondary)" }}
           >
-            <p className="text-xs opacity-60 mb-1">Hobi</p>
+            <p className="text-xs opacity-60 mb-1">Tentang</p>
             <p className="text-sm">
-              Menyalurkan kreativitas melalui pengembangan website, game, dan
-              aplikasi.
+              Punya beragam kreativitas dalam pembuatan website, aplikasi, dan
+              game.
             </p>
           </div>
 
@@ -69,26 +92,50 @@ export default function CreatorModal({ onClose }: CreatorModalProps) {
               lebih baik dari hari sebelumnya.
             </p>
           </div>
-
-          <a
-            href={`https://wa.me/${WA_NUMBER}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 rounded-xl px-4 py-3 transition-opacity hover:opacity-80"
-            style={{ backgroundColor: "var(--bg-secondary)" }}
-          >
-            <MessageCircle size={18} className="shrink-0 text-accent" />
-            <div>
-              <p className="text-xs opacity-60">WhatsApp</p>
-              <p className="text-sm">+{WA_NUMBER}</p>
-            </div>
-          </a>
         </div>
 
-        <div>
+        {/* Kontak */}
+        <div className="mb-5">
+          <p className="text-sm font-medium mb-2">Bisa disapa lewat</p>
+          <div className="space-y-2">
+            <a
+              href={`https://wa.me/${WA_NUMBER}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-xl px-4 py-3 transition-opacity hover:opacity-80"
+              style={{ backgroundColor: "var(--bg-secondary)" }}
+            >
+              <MessageCircle size={18} className="shrink-0 text-accent" />
+              <div className="min-w-0">
+                <p className="text-xs opacity-60">WhatsApp</p>
+                <p className="text-sm truncate">+{WA_NUMBER}</p>
+              </div>
+            </a>
+
+            {CONTACTS.map((c) => (
+              <a
+                key={c.label}
+                href={c.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-xl px-4 py-3 transition-opacity hover:opacity-80 min-w-0"
+                style={{ backgroundColor: "var(--bg-secondary)" }}
+              >
+                <c.icon size={18} className="shrink-0 text-accent" />
+                <div className="min-w-0">
+                  <p className="text-xs opacity-60">{c.label}</p>
+                  <p className="text-sm truncate">{c.value}</p>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        {/* Project yang sudah rilis */}
+        <div className="mb-5">
           <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
             <Sparkles size={14} className="text-accent" />
-            Kunjungi Project Lainnya
+            Project Lainnya
           </p>
           <div className="space-y-2">
             {PROJECT_LINKS.map((p) => (
@@ -97,12 +144,32 @@ export default function CreatorModal({ onClose }: CreatorModalProps) {
                 href={p.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center justify-between rounded-xl px-4 py-2.5 text-sm transition-opacity hover:opacity-80"
+                className="flex items-center justify-between gap-2 rounded-xl px-4 py-2.5 text-sm transition-opacity hover:opacity-80 min-w-0"
                 style={{ backgroundColor: "var(--bg-secondary)" }}
               >
-                <span>{p.label}</span>
-                <ExternalLink size={14} className="opacity-50" />
+                <span className="truncate">{p.label}</span>
+                <ExternalLink size={14} className="opacity-50 shrink-0" />
               </a>
+            ))}
+          </div>
+        </div>
+
+        {/* Project yang sedang dikerjakan */}
+        <div>
+          <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
+            <Clock size={14} className="text-accent" />
+            Sedang Dikerjakan
+          </p>
+          <div className="space-y-2">
+            {UPCOMING_PROJECTS.map((p) => (
+              <div
+                key={p.label}
+                className="rounded-xl px-4 py-2.5"
+                style={{ backgroundColor: "var(--bg-secondary)" }}
+              >
+                <p className="text-sm font-medium">{p.label}</p>
+                <p className="text-xs opacity-60 mt-0.5">{p.desc}</p>
+              </div>
             ))}
           </div>
         </div>
