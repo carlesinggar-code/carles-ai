@@ -7,6 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import ChatWindow from "@/components/ChatWindow";
 import SettingsModal from "@/components/SettingsModal";
 import LoginPage from "@/app/login/page";
+import OfflineBanner from "@/components/OfflineBanner";
 import { useChatHistory } from "@/lib/useChatHistory";
 
 export default function Home() {
@@ -45,7 +46,9 @@ export default function Home() {
   }
 
   return (
-    <main className="flex h-dvh overflow-hidden">
+    <div className="flex flex-col h-dvh overflow-hidden">
+      <OfflineBanner />
+      <main className="flex flex-1 min-h-0 overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeId}
@@ -104,5 +107,6 @@ export default function Home() {
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </main>
+    </div>
   );
 }
