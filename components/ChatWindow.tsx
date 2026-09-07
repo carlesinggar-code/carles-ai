@@ -186,6 +186,17 @@ export default function ChatWindow({
     });
   }
 
+  // Potong nama file di level STRING (bukan cuma CSS), biar dijamin pendek
+  // apapun yang terjadi ke layout di sekitarnya.
+  function truncateFilename(name: string, maxLength = 22): string {
+    if (name.length <= maxLength) return name;
+    const dotIndex = name.lastIndexOf(".");
+    const ext = dotIndex > 0 ? name.slice(dotIndex) : "";
+    const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+    const keep = Math.max(maxLength - ext.length - 1, 4);
+    return `${base.slice(0, keep)}…${ext}`;
+  }
+
   const DOCUMENT_ACCEPT_TYPES = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -507,7 +518,7 @@ export default function ChatWindow({
               style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-secondary)" }}
             >
               <FileText size={16} className="text-accent shrink-0" />
-              <span className="truncate min-w-0">{pendingFile.name}</span>
+              <span>{truncateFilename(pendingFile.name)}</span>
               <button
                 onClick={() => setPendingFile(null)}
                 className="w-4 h-4 rounded-full bg-black/40 text-white flex items-center justify-center shrink-0"

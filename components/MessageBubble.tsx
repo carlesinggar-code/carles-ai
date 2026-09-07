@@ -16,6 +16,18 @@ interface MessageBubbleProps {
   isRegenerating?: boolean;
 }
 
+// Potong nama file di level STRING (bukan cuma CSS text-overflow), biar
+// dijamin pendek apapun yang terjadi ke layout di sekitarnya. Nyisain
+// ekstensi file (misal ".pdf") biar tetep jelas jenis filenya.
+function truncateFilename(name: string, maxLength = 22): string {
+  if (name.length <= maxLength) return name;
+  const dotIndex = name.lastIndexOf(".");
+  const ext = dotIndex > 0 ? name.slice(dotIndex) : "";
+  const base = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+  const keep = Math.max(maxLength - ext.length - 1, 4);
+  return `${base.slice(0, keep)}…${ext}`;
+}
+
 // Buang syntax markdown/tabel biar enak didengar pas dibacain (TTS) — nggak
 // kebaca literal "bintang", "garis vertikal" (karakter "|" tabel), dsb.
 // Cuma sisain huruf, angka, dan tanda baca penting buat jeda kalimat.
@@ -128,7 +140,16 @@ export default function MessageBubble({
             {session?.user?.name?.[0] ?? "U"}
           </div>
         )}
-        <div className="flex flex-col items-end min-w-0 max-w-[80%] md:max-w-[70%]">
+        <div className="flex flex-col items-end min-w-0 max-w-[80%] md:max-w-[70%] gap-1.5">
+          {message.file && (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs"
+              style={{ backgroundColor: "var(--bg-secondary)" }}
+            >
+              <FileText size={14} className="shrink-0 text-accent" />
+              <span>{truncateFilename(message.file.name)}</span>
+            </div>
+          )}
           <div className="min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed bg-accent text-white rounded-tr-sm">
             {message.image && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -137,12 +158,6 @@ export default function MessageBubble({
                 alt="Lampiran"
                 className="rounded-lg mb-2 max-h-64 object-cover"
               />
-            )}
-            {message.file && (
-              <div className="flex items-center gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-white/15 text-xs min-w-0">
-                <FileText size={14} className="shrink-0" />
-                <span className="truncate min-w-0">{message.file.name}</span>
-              </div>
             )}
             <p className="whitespace-pre-wrap">{message.content}</p>
           </div>
