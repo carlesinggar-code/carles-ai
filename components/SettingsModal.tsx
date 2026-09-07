@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Check, User, Download, ChevronRight } from "lucide-react";
+import { X, Check, User, Download, ChevronRight, Sparkles } from "lucide-react";
 import { useTheme, ColorTheme, Mode } from "@/context/ThemeContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { Lang } from "@/lib/translations";
 import CreatorModal from "./CreatorModal";
+import FeaturesModal from "./FeaturesModal";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -15,6 +16,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { colorTheme, setColorTheme, mode, setMode } = useTheme();
   const { lang, setLang, t } = useLanguage();
   const [showCreator, setShowCreator] = useState(false);
+  const [showFeatures, setShowFeatures] = useState(false);
   const [apkInfo, setApkInfo] = useState<{ available: boolean; sizeMB?: string } | null>(null);
 
   useEffect(() => {
@@ -147,6 +149,16 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               <ChevronRight size={16} className="opacity-40" />
             </button>
 
+            <button
+              onClick={() => setShowFeatures(true)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-opacity hover:opacity-80"
+              style={{ backgroundColor: "var(--bg-secondary)" }}
+            >
+              <Sparkles size={18} className="text-accent shrink-0" />
+              <span className="text-sm flex-1 text-left">Fitur Carles.ai</span>
+              <ChevronRight size={16} className="opacity-40" />
+            </button>
+
             {apkInfo?.available ? (
               <a
                 href="/carles-ai.apk"
@@ -173,6 +185,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       </div>
 
       {showCreator && <CreatorModal onClose={() => setShowCreator(false)} />}
+      {showFeatures && <FeaturesModal onClose={() => setShowFeatures(false)} />}
     </div>
   );
 }

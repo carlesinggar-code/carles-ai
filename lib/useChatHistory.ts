@@ -53,6 +53,37 @@ function cleanupOversizedAttachments(conversations: Conversation[]): {
   return { cleaned, changed };
 }
 
+// Kalau localStorage penuh pas nyimpen, buang percakapan PALING LAMA
+// (berdasarkan kapan terakhir diupdate) satu-satu sampai muat — daripada
+// gagal diam-diam. Percakapan yang lagi aktif dibuka diprioritaskan buat
+// TIDAK dibuang duluan (baru kebuang kalau semua yang lain udah habis).
+function saveWithEviction(
+  storageKey: string,
+  conversations: Conversation[],
+  activeId: string | null
+): Conversation[] {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(conversations));
+    return conversations;
+  } catch (err) {
+    const isQuotaError =
+      err instanceof DOMException &&
+      (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+    if (!isQuotaError || conversations.length === 0) {
+      console.error("Gagal simpan riwayat chat ke localStorage:", err);
+      return conversations;
+    }
+    const candidates = conversations.filter((c) => c.id !== activeId);
+    const pool = candidates.length > 0 ? candidates : conversations;
+    const oldest = [...pool].sort((a, b) => a.updatedAt - b.updatedAt)[0];
+    console.warn(
+      `localStorage penuh — membuang percakapan terlama ("${oldest.title}") untuk kasih ruang.`
+    );
+    const trimmed = conversations.filter((c) => c.id !== oldest.id);
+    return saveWithEviction(storageKey, trimmed, activeId);
+  }
+}
+
 // Riwayat chat sekarang di-scope per akun (pakai email user) — bukan satu
 // kunci global — biar kalau ganti akun Google di device/browser yang sama,
 // riwayatnya nggak kecampur.
@@ -96,16 +127,15 @@ export function useChatHistory(userEmail: string | null | undefined) {
     setActiveId(null);
   }, [storageKey]);
 
-  // Simpan setiap kali berubah. Dibungkus try/catch — kalau suatu saat
-  // masih kena quota juga (kasus ekstrem), minimal nggak bikin app crash;
-  // percakapan tetap jalan di memori untuk sesi ini.
+  // Simpan setiap kali berubah. Kalau localStorage penuh, otomatis buang
+  // percakapan terlama buat kasih ruang (lihat saveWithEviction), bukan
+  // gagal diam-diam / bikin app crash.
   useEffect(() => {
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(conversations));
-    } catch (err) {
-      console.error("Gagal simpan riwayat chat ke localStorage:", err);
+    const saved = saveWithEviction(storageKey, conversations, activeId);
+    if (saved.length !== conversations.length) {
+      setConversations(saved);
     }
-  }, [conversations, storageKey]);
+  }, [conversations, storageKey, activeId]);
 
   const activeConversation =
     conversations.find((c) => c.id === activeId) ?? null;
