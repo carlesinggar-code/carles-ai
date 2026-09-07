@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export interface ChatMessage {
@@ -94,9 +94,15 @@ export function useChatHistory(userEmail: string | null | undefined) {
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Jaga-jaga race condition: tanpa ini, efek "simpan" bisa kepanggil
+  // dengan state kosong SEBELUM efek "load" selesai baca localStorage,
+  // yang secara singkat nimpa data asli jadi "[]". Flag ini mastiin
+  // "simpan" nggak jalan sebelum "load" beneran kelar buat storageKey ini.
+  const hasLoadedRef = useRef(false);
 
   // Load dari localStorage saat mount ATAU saat akun (userEmail) berubah
   useEffect(() => {
+    hasLoadedRef.current = false;
     const raw = localStorage.getItem(storageKey);
     if (raw) {
       try {
@@ -125,12 +131,14 @@ export function useChatHistory(userEmail: string | null | undefined) {
       setConversations([]);
     }
     setActiveId(null);
+    hasLoadedRef.current = true;
   }, [storageKey]);
 
   // Simpan setiap kali berubah. Kalau localStorage penuh, otomatis buang
   // percakapan terlama buat kasih ruang (lihat saveWithEviction), bukan
   // gagal diam-diam / bikin app crash.
   useEffect(() => {
+    if (!hasLoadedRef.current) return;
     const saved = saveWithEviction(storageKey, conversations, activeId);
     if (saved.length !== conversations.length) {
       setConversations(saved);

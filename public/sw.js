@@ -25,6 +25,9 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.pathname.startsWith("/api/")) return;
+  // File APK itu buat didownload sekali, bukan bagian tampilan app —
+  // nggak perlu (dan boros) ikut dicache buat offline.
+  if (url.pathname.endsWith(".apk")) return;
 
   event.respondWith(
     fetch(request)

@@ -194,6 +194,14 @@ export default function MessageBubble({
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw, rehypeSanitize]}
               components={{
+                // Link dibuka di tab baru, bukan navigasi keluar dari app di
+                // tab/jendela yang sama — penting khususnya buat versi
+                // ter-install (APK/PWA) biar nggak "kabur" dari app.
+                a: ({ children, ...props }) => (
+                  <a {...props} target="_blank" rel="noopener noreferrer">
+                    {children}
+                  </a>
+                ),
                 // Tabel GFM defaultnya nggak respect max-width parent dan
                 // bikin layout jebol di mobile. Bungkus dengan scroll horizontal
                 // sendiri, bukan ikut ndorong lebar seluruh chat bubble.

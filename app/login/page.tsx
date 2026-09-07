@@ -5,7 +5,7 @@ import Logo from "@/components/Logo";
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--bg-secondary)" }}>
+    <div className="min-h-dvh flex items-center justify-center px-4" style={{ backgroundColor: "var(--bg-secondary)" }}>
       <div
         className="w-full max-w-sm rounded-2xl shadow-sm border p-8 text-center"
         style={{ backgroundColor: "var(--bg-primary)", borderColor: "var(--border-color)" }}
