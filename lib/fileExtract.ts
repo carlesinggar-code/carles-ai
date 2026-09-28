@@ -11,7 +11,7 @@ const MAX_CHARS = 20000;
 // sama dipakai buat fitur baca gambar. Dibatasin sekian halaman biar nggak
 // kelamaan/timeout & nggak boros.
 const MAX_OCR_PAGES = 5;
-const VISION_MODEL = "qwen/qwen3.6-27b";
+const VISION_MODEL = "qwen/qwen3.8-27b";
 
 function truncate(text: string): string {
   const trimmed = text.trim();

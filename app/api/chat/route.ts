@@ -23,7 +23,7 @@ interface IncomingMessage {
 const TEXT_MODEL = "openai/gpt-oss-120b";
 // Model vision: dipakai otomatis kalau ada pesan user yang melampirkan gambar.
 // (meta-llama/llama-4-scout-17b-16e-instruct sudah di-deprecate Groq per 17 Jun 2026)
-const VISION_MODEL = "qwen/qwen3.6-27b";
+const VISION_MODEL = "qwen/qwen3.8-27b";
 // Batas waktu tunggu Gemini sebelum kita fallback ke Groq (ms).
 const GEMINI_TIMEOUT_MS = 7000;
 

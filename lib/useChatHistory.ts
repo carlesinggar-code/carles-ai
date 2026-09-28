@@ -1,17 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { v4 as uuidv4 } from "uuid";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  image?: string; // base64 data URL, kalau user melampirkan gambar
+  image?: string; // URL (dari Supabase Storage) setelah tersimpan
   file?: {
     name: string;
     mimeType: string;
-    data?: string; // base64 (tanpa prefix data URL) — cuma disimpan buat pesan TERAKHIR, lihat catatan di ChatWindow
   };
   createdAt: number;
 }
@@ -23,203 +21,179 @@ export interface Conversation {
   updatedAt: number;
 }
 
-const STORAGE_KEY_PREFIX = "trip-assistant-conversations";
-// Riwayat lama (sebelum fix) bisa nyimpen gambar/file base64 utuh yang
-// gede banget. Kalau nemu field segede ini pas load, dianggap "sampah lama"
-// dan dibuang isinya (cuma disisain placeholder), biar nggak numpuk terus
-// bikin localStorage penuh (QuotaExceededError).
-const MAX_STORED_ATTACHMENT_CHARS = 60000;
-
-function cleanupOversizedAttachments(conversations: Conversation[]): {
-  cleaned: Conversation[];
-  changed: boolean;
-} {
-  let changed = false;
-  const cleaned = conversations.map((c) => ({
-    ...c,
-    messages: c.messages.map((m) => {
-      let next = m;
-      if (next.image && next.image.length > MAX_STORED_ATTACHMENT_CHARS) {
-        changed = true;
-        next = { ...next, image: undefined };
-      }
-      if (next.file?.data && next.file.data.length > 0) {
-        changed = true;
-        next = { ...next, file: { name: next.file.name, mimeType: next.file.mimeType } };
-      }
-      return next;
-    }),
-  }));
-  return { cleaned, changed };
+interface ConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: number;
 }
 
-// Kalau localStorage penuh pas nyimpen, buang percakapan PALING LAMA
-// (berdasarkan kapan terakhir diupdate) satu-satu sampai muat — daripada
-// gagal diam-diam. Percakapan yang lagi aktif dibuka diprioritaskan buat
-// TIDAK dibuang duluan (baru kebuang kalau semua yang lain udah habis).
-function saveWithEviction(
-  storageKey: string,
-  conversations: Conversation[],
-  activeId: string | null
-): Conversation[] {
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(conversations));
-    return conversations;
-  } catch (err) {
-    const isQuotaError =
-      err instanceof DOMException &&
-      (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
-    if (!isQuotaError || conversations.length === 0) {
-      console.error("Gagal simpan riwayat chat ke localStorage:", err);
-      return conversations;
-    }
-    const candidates = conversations.filter((c) => c.id !== activeId);
-    const pool = candidates.length > 0 ? candidates : conversations;
-    const oldest = [...pool].sort((a, b) => a.updatedAt - b.updatedAt)[0];
-    console.warn(
-      `localStorage penuh — membuang percakapan terlama ("${oldest.title}") untuk kasih ruang.`
-    );
-    const trimmed = conversations.filter((c) => c.id !== oldest.id);
-    return saveWithEviction(storageKey, trimmed, activeId);
-  }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapDbMessage(row: any): ChatMessage {
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    image: row.image_url ?? undefined,
+    file: row.file_name ? { name: row.file_name, mimeType: row.file_mime_type } : undefined,
+    createdAt: new Date(row.created_at).getTime(),
+  };
 }
 
-// Riwayat chat sekarang di-scope per akun (pakai email user) — bukan satu
-// kunci global — biar kalau ganti akun Google di device/browser yang sama,
-// riwayatnya nggak kecampur.
-export function useChatHistory(userEmail: string | null | undefined) {
-  const storageKey = userEmail
-    ? `${STORAGE_KEY_PREFIX}:${userEmail}`
-    : STORAGE_KEY_PREFIX;
+export function useChatHistory() {
+  const [conversationsList, setConversationsList] = useState<ConversationSummary[]>([]);
+  const [activeId, setActiveIdState] = useState<string | null>(null);
+  const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const fetchTokenRef = useRef(0);
 
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  // Jaga-jaga race condition: tanpa ini, efek "simpan" bisa kepanggil
-  // dengan state kosong SEBELUM efek "load" selesai baca localStorage,
-  // yang secara singkat nimpa data asli jadi "[]". Flag ini mastiin
-  // "simpan" nggak jalan sebelum "load" beneran kelar buat storageKey ini.
-  const hasLoadedRef = useRef(false);
-
-  // Load dari localStorage saat mount ATAU saat akun (userEmail) berubah
-  useEffect(() => {
-    hasLoadedRef.current = false;
-    const raw = localStorage.getItem(storageKey);
-    if (raw) {
-      try {
-        const parsed: Conversation[] = JSON.parse(raw);
-        // Bersihin lampiran gede peninggalan sebelum fix storage. Ini yang
-        // "menyembuhkan" akun yang udah kepalang kena QuotaExceededError.
-        const { cleaned, changed } = cleanupOversizedAttachments(parsed);
-        setConversations(cleaned);
-        if (changed) {
-          try {
-            localStorage.setItem(storageKey, JSON.stringify(cleaned));
-          } catch {
-            // kalau masih gagal simpen juga, biarin — minimal state di
-            // memori udah bersih buat sesi ini
-          }
-        }
-        // Sengaja TIDAK auto-select percakapan terakhir di sini — user selalu
-        // mendarat di layar "chat baru" saat buka/reload app. Riwayat lama
-        // tetap ada dan bisa diklik dari sidebar.
-      } catch {
-        // data korup, abaikan
-      }
-    } else {
-      // Akun ini belum punya riwayat tersimpan — kosongkan (penting pas
-      // ganti akun di sesi yang sama, biar nggak nyisa punya akun sebelumnya)
-      setConversations([]);
+  const refreshList = useCallback(async () => {
+    setLoadingList(true);
+    try {
+      const res = await fetch("/api/conversations");
+      if (!res.ok) return;
+      const data = await res.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setConversationsList(
+        (data.conversations ?? []).map((c: any) => ({
+          id: c.id,
+          title: c.title,
+          updatedAt: new Date(c.updated_at).getTime(),
+        }))
+      );
+    } catch {
+      // biarin list kosong kalau gagal, jangan crash app
+    } finally {
+      setLoadingList(false);
     }
-    setActiveId(null);
-    hasLoadedRef.current = true;
-  }, [storageKey]);
-
-  // Simpan setiap kali berubah. Kalau localStorage penuh, otomatis buang
-  // percakapan terlama buat kasih ruang (lihat saveWithEviction), bukan
-  // gagal diam-diam / bikin app crash.
-  useEffect(() => {
-    if (!hasLoadedRef.current) return;
-    const saved = saveWithEviction(storageKey, conversations, activeId);
-    if (saved.length !== conversations.length) {
-      setConversations(saved);
-    }
-  }, [conversations, storageKey, activeId]);
-
-  const activeConversation =
-    conversations.find((c) => c.id === activeId) ?? null;
-
-  const createConversation = useCallback(() => {
-    const newConvo: Conversation = {
-      id: uuidv4(),
-      title: "Percakapan Baru",
-      messages: [],
-      updatedAt: Date.now(),
-    };
-    setConversations((prev) => [newConvo, ...prev]);
-    setActiveId(newConvo.id);
-    return newConvo.id;
   }, []);
 
-  // Dipakai tombol "Percakapan Baru": cuma reset TAMPILAN ke kosong, TANPA
-  // bikin entri history baru. Entri history beneran baru dibuat pas pesan
-  // pertama dikirim (lewat createConversation, dipanggil dari
-  // handleEnsureConversation). Ini yang mencegah history numpuk banyak
-  // "Percakapan Baru" kosong kalau tombolnya diklik berkali-kali.
+  useEffect(() => {
+    refreshList();
+  }, [refreshList]);
+
+  const setActiveId = useCallback((id: string | null) => {
+    setActiveIdState(id);
+    setActiveMessages([]);
+    if (!id) return;
+
+    const token = ++fetchTokenRef.current;
+    setLoadingMessages(true);
+    fetch(`/api/conversations/${id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (token !== fetchTokenRef.current || !data) return;
+        setActiveMessages((data.messages ?? []).map(mapDbMessage));
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (token === fetchTokenRef.current) setLoadingMessages(false);
+      });
+  }, []);
+
+  const createConversation = useCallback((): Promise<string> => {
+    return fetch("/api/conversations", { method: "POST" })
+      .then((res) => res.json())
+      .then((data) => {
+        const convo = data.conversation;
+        setConversationsList((prev) => [
+          { id: convo.id, title: convo.title, updatedAt: new Date(convo.updated_at).getTime() },
+          ...prev,
+        ]);
+        setActiveIdState(convo.id);
+        setActiveMessages([]);
+        return convo.id as string;
+      });
+  }, []);
+
   const goToNewChat = useCallback(() => {
-    setActiveId(null);
+    setActiveIdState(null);
+    setActiveMessages([]);
   }, []);
 
   const deleteConversation = useCallback(
-    (id: string) => {
-      setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeId === id) setActiveId(null);
+    async (id: string) => {
+      setConversationsList((prev) => prev.filter((c) => c.id !== id));
+      if (activeId === id) {
+        setActiveIdState(null);
+        setActiveMessages([]);
+      }
+      await fetch(`/api/conversations/${id}`, { method: "DELETE" });
     },
     [activeId]
   );
 
-  const addMessage = useCallback(
-    (conversationId: string, message: ChatMessage) => {
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== conversationId) return c;
-          const isFirstUserMsg = c.messages.length === 0 && message.role === "user";
-          return {
-            ...c,
-            messages: [...c.messages, message],
-            title: isFirstUserMsg
-              ? message.content.slice(0, 40) +
-                (message.content.length > 40 ? "..." : "")
-              : c.title,
-            updatedAt: Date.now(),
-          };
-        })
-      );
+  const addMessage = useCallback(async (conversationId: string, message: ChatMessage) => {
+    setActiveMessages((prev) => [...prev, message]);
+
+    try {
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: message.role,
+          content: message.content,
+          imageUrl: message.image,
+          fileName: message.file?.name,
+          fileMimeType: message.file?.mimeType,
+        }),
+      });
+      const data = await res.json();
+      if (data.message) {
+        setActiveMessages((prev) =>
+          prev.map((m) => (m.id === message.id ? mapDbMessage(data.message) : m))
+        );
+      }
+    } catch {
+      // kalau gagal simpen ke server, pesannya tetep kelihatan di sesi ini
+    }
+
+    setConversationsList((prev) => {
+      const idx = prev.findIndex((c) => c.id === conversationId);
+      if (idx === -1) return prev;
+      const updated = { ...prev[idx], updatedAt: Date.now() };
+      if (prev[idx].title === "Percakapan Baru" && message.role === "user") {
+        updated.title = message.content.slice(0, 40) + (message.content.length > 40 ? "..." : "");
+      }
+      const rest = prev.filter((_, i) => i !== idx);
+      return [updated, ...rest];
+    });
+  }, []);
+
+  const updateMessage = useCallback(
+    async (conversationId: string, messageId: string, content: string) => {
+      setActiveMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, content } : m)));
+      try {
+        await fetch(`/api/messages/${messageId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+      } catch {
+        // biarin, minimal UI udah keupdate buat sesi ini
+      }
     },
     []
   );
 
-  // Dipakai buat fitur "Ulangi" — ganti isi satu pesan (assistant) di tempat,
-  // tanpa nambah pesan baru.
-  const updateMessage = useCallback(
-    (conversationId: string, messageId: string, newContent: string) => {
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== conversationId) return c;
-          return {
-            ...c,
-            messages: c.messages.map((m) =>
-              m.id === messageId ? { ...m, content: newContent } : m
-            ),
-            updatedAt: Date.now(),
-          };
-        })
-      );
-    },
-    []
-  );
+  const activeConversation: Conversation | null = activeId
+    ? {
+        id: activeId,
+        title: conversationsList.find((c) => c.id === activeId)?.title ?? "Percakapan Baru",
+        messages: activeMessages,
+        updatedAt: Date.now(),
+      }
+    : null;
+
+  const conversations: Conversation[] = conversationsList.map((c) => ({
+    id: c.id,
+    title: c.title,
+    messages: c.id === activeId ? activeMessages : [],
+    updatedAt: c.updatedAt,
+  }));
 
   return {
-    conversations: conversations.sort((a, b) => b.updatedAt - a.updatedAt),
+    conversations,
     activeConversation,
     activeId,
     setActiveId,
@@ -228,5 +202,7 @@ export function useChatHistory(userEmail: string | null | undefined) {
     deleteConversation,
     addMessage,
     updateMessage,
+    loadingList,
+    loadingMessages,
   };
 }

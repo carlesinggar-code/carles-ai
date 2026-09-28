@@ -12,7 +12,7 @@ interface ChatWindowProps {
   conversation: Conversation | null;
   onNewMessage: (conversationId: string, message: ChatMessage) => void;
   onUpdateMessage: (conversationId: string, messageId: string, content: string) => void;
-  onEnsureConversation: () => string;
+  onEnsureConversation: () => Promise<string>;
   onNewChat: () => void;
   onOpenSettings: () => void;
   onOpenSidebar: () => void;
@@ -39,13 +39,11 @@ export default function ChatWindow({
   const fileInputRef = useRef<HTMLInputElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
-  // PENTING: cache lampiran ASLI (base64 penuh) di memori doang — SENGAJA
-  // TIDAK disimpan ke localStorage (itu penyebab QuotaExceededError kemarin:
-  // nyimpen PDF/gambar ukuran penuh selamanya di riwayat chat bikin
-  // penyimpanan browser penuh). Dipakai buat fitur "Ulangi" di sesi yang
-  // sama; hilang kalau halaman di-refresh (itu risiko yang kita terima
-  // demi nggak numpuk-numpuk storage).
-  const attachmentCacheRef = useRef<Map<string, { image?: string; file?: { name: string; mimeType: string; data: string } }>>(new Map());
+  // PENTING: file dokumen SENGAJA TIDAK disimpan permanen di database (cuma
+  // nama+tipenya) — isinya cuma dipakai sekali buat diambil sarinya jadi
+  // teks. Cache di memori ini yang bikin fitur "Ulangi" masih bisa akses
+  // isi file yang sama, selama sesi ini belum di-refresh.
+  const attachmentCacheRef = useRef<Map<string, { file?: { name: string; mimeType: string; data: string } }>>(new Map());
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -115,41 +113,6 @@ export default function ChatWindow({
   // dulu di browser sebelum dijadikan base64 (dikirim ke API).
   const MAX_DIMENSION = 1280;
   const JPEG_QUALITY = 0.7;
-
-  // Versi lebih kecil lagi, KHUSUS buat disimpen permanen di riwayat
-  // (localStorage) — beda dari compressImage di atas yang ukurannya masih
-  // cukup besar buat dikirim ke AI vision. Ini cuma buat preview kecil di
-  // bubble chat, jadi bisa dikecilin abis-abisan tanpa masalah.
-  function makeStorageThumbnail(dataUrl: string): Promise<string> {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onerror = () => resolve(dataUrl); // gagal → fallback pakai yang asli
-      img.onload = () => {
-        const THUMB_MAX = 200;
-        let { width, height } = img;
-        if (width > THUMB_MAX || height > THUMB_MAX) {
-          if (width > height) {
-            height = Math.round((height * THUMB_MAX) / width);
-            width = THUMB_MAX;
-          } else {
-            width = Math.round((width * THUMB_MAX) / height);
-            height = THUMB_MAX;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(dataUrl);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.5));
-      };
-      img.src = dataUrl;
-    });
-  }
 
   function compressImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -292,27 +255,41 @@ export default function ChatWindow({
     const content = (text ?? input).trim();
     if ((!content && !pendingImage && !pendingFile) || loading) return;
 
-    const convoId = conversation?.id ?? onEnsureConversation();
+    const convoId = conversation?.id ?? (await onEnsureConversation());
     const messageId = uuidv4();
 
-    // Cache lampiran ASLI (ukuran penuh) di memori — dipakai buat request
-    // ke API sekarang, dan buat "Ulangi" nanti (selama belum refresh halaman).
-    if (pendingImage || pendingFile) {
-      attachmentCacheRef.current.set(messageId, {
-        image: pendingImage ?? undefined,
-        file: pendingFile ?? undefined,
-      });
+    // File dokumen SENGAJA TIDAK disimpan permanen (cuma nama+tipenya di
+    // database) — isinya udah "diambil sarinya" jadi teks pas dikirim ke
+    // AI. Cache di memori ini yang bikin fitur "Ulangi" masih bisa baca
+    // ulang isi file yang sama, selama belum refresh halaman.
+    if (pendingFile) {
+      attachmentCacheRef.current.set(messageId, { file: pendingFile });
     }
 
-    // Versi yang DIPERSIST ke localStorage — gambar dikecilin abis-abisan
-    // jadi thumbnail, file dokumen CUMA nama+tipe-nya doang (bukan isi
-    // base64-nya). Ini yang mencegah localStorage penuh (QuotaExceededError).
-    const storedImage = pendingImage ? await makeStorageThumbnail(pendingImage) : undefined;
+    // Gambar: upload ke Supabase Storage dulu → dapet URL publik. URL ini
+    // dipakai buat DUA hal — ditampilin permanen di riwayat (kualitas
+    // bagus, bukan thumbnail buram kayak versi localStorage dulu) DAN
+    // dikirim ke AI vision (Groq bisa baca gambar langsung dari URL).
+    let imageUrl: string | undefined;
+    if (pendingImage) {
+      try {
+        const uploadRes = await fetch("/api/upload-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataUrl: pendingImage }),
+        });
+        const uploadData = await uploadRes.json();
+        imageUrl = uploadRes.ok ? uploadData.url : undefined;
+      } catch {
+        // gagal upload — lanjut tanpa gambar daripada gagal total
+      }
+    }
+
     const userMessage: ChatMessage = {
       id: messageId,
       role: "user",
       content: content || (pendingFile ? `(file terlampir: ${pendingFile.name})` : "(gambar terlampir)"),
-      image: storedImage,
+      image: imageUrl,
       file: pendingFile ? { name: pendingFile.name, mimeType: pendingFile.mimeType } : undefined,
       createdAt: Date.now(),
     };
@@ -325,15 +302,15 @@ export default function ChatWindow({
     try {
       const fullHistory = [...(conversation?.messages ?? []), userMessage];
       const lastIndex = fullHistory.length - 1;
-      const cached = attachmentCacheRef.current.get(messageId);
+      const cachedFile = attachmentCacheRef.current.get(messageId)?.file;
       const history = fullHistory.map((m, i) => ({
         role: m.role,
         content: m.content,
-        // Cuma sertakan gambar/file untuk pesan TERAKHIR, dan pakai versi
-        // ASLI dari cache memori (bukan thumbnail kecil yang kesimpen di
-        // history) biar AI tetap baca kualitas penuh.
-        image: i === lastIndex ? cached?.image ?? m.image : undefined,
-        file: i === lastIndex ? cached?.file : m.file ? { name: m.file.name, mimeType: m.file.mimeType } : undefined,
+        // Gambar: kirim URL-nya langsung, Groq bisa fetch sendiri.
+        // File: cuma disertain buat pesan TERAKHIR, pakai data asli dari
+        // cache memori (bukan history yang cuma nyimpen nama filenya).
+        image: i === lastIndex ? m.image : undefined,
+        file: i === lastIndex ? cachedFile : undefined,
       }));
 
       const res = await fetch("/api/chat", {
@@ -376,12 +353,14 @@ export default function ChatWindow({
     const historyUpTo = conversation.messages.slice(0, idx);
     const lastIndex = historyUpTo.length - 1;
     const lastMessage = historyUpTo[lastIndex];
-    const cached = attachmentCacheRef.current.get(lastMessage?.id);
+    const cachedFile = attachmentCacheRef.current.get(lastMessage?.id)?.file;
     const history = historyUpTo.map((m, i) => ({
       role: m.role,
       content: m.content,
-      image: i === lastIndex ? cached?.image ?? m.image : undefined,
-      file: i === lastIndex ? cached?.file : m.file ? { name: m.file.name, mimeType: m.file.mimeType } : undefined,
+      // Gambar udah ada URL permanennya di database — tinggal pakai lagi,
+      // nggak perlu cache khusus kayak file dokumen.
+      image: i === lastIndex ? m.image : undefined,
+      file: i === lastIndex ? cachedFile : undefined,
     }));
 
     setRegeneratingId(messageId);
