@@ -93,50 +93,7 @@ Ini bagian yang agak banyak langkah, tapi sekali setting langsung jalan:
    ```
 6. Klik Create. Copy **Client ID** dan **Client Secret** yang muncul.
 
-### 5. Isi file environment
-
-```bash
-cp .env.local.example .env.local
-```
-
-Edit `.env.local`, isi semua nilainya:
-
-```
-GROQ_API_KEY=gsk_...
-GOOGLE_CLIENT_ID=...apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-...
-NEXTAUTH_SECRET=isi-string-acak-panjang-apa-saja
-NEXTAUTH_URL=http://localhost:3000
-```
-
-> `NEXTAUTH_SECRET` bisa diisi string acak apa saja (semakin panjang &
-> random semakin aman). Kalau punya terminal dengan `openssl`, jalankan
-> `openssl rand -base64 32` untuk generate otomatis.
-
-### 6. Jalankan
-
-```bash
-npm run dev
-```
-
-Buka [http://localhost:3000](http://localhost:3000) — kamu akan diarahkan
-ke halaman login, klik "Masuk dengan Google", lalu masuk ke aplikasi.
-
-## 🌐 Deploy ke Vercel (opsional)
-
-1. Push repo ke GitHub, import di [vercel.com](https://vercel.com).
-2. Tambahkan semua environment variable di atas ke dashboard Vercel
-   (`GROQ_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-   `NEXTAUTH_SECRET`). Untuk `NEXTAUTH_URL`, isi dengan URL Vercel kamu
-   (misal `https://carles-ai.vercel.app`).
-3. **Penting:** balik lagi ke Google Cloud Console > Credentials, tambahkan
-   redirect URI production:
-   ```
-   https://carles-ai.vercel.app/api/auth/callback/google
-   ```
-   (ganti sesuai domain Vercel kamu, dan jangan hapus yang localhost
-   supaya development tetap jalan).
-4. Deploy.
+#Lanjutnya Tanya Carles Saja yuk bisa DM instagramnya 
 
 ## 📄 Lisensi
 
