@@ -1,17 +1,12 @@
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
-import Groq from "groq-sdk";
-import { getDocumentProxy, extractText, renderPageAsImage } from "unpdf";
+import { getDocumentProxy, extractText } from "unpdf";
+import { transcribeWithGemini } from "@/lib/gemini";
 
 // Batas panjang teks hasil ekstraksi yang dikirim ke AI. Dokumen yang
-// kepanjangan bisa bikin boros token / kena limit max_tokens, jadi kita
-// potong dan kasih tau kalau ada bagian yang terpotong.
+// kepanjangan bisa bikin boros token / kena limit, jadi kita potong dan
+// kasih tau kalau ada bagian yang terpotong.
 const MAX_CHARS = 20000;
-// PDF hasil scan/foto (nggak ada teks asli) di-OCR pakai model vision yang
-// sama dipakai buat fitur baca gambar. Dibatasin sekian halaman biar nggak
-// kelamaan/timeout & nggak boros.
-const MAX_OCR_PAGES = 5;
-const VISION_MODEL = "qwen/qwen3.8-27b";
 
 function truncate(text: string): string {
   const trimmed = text.trim();
@@ -22,68 +17,18 @@ function truncate(text: string): string {
   );
 }
 
-function stripThinkingTags(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-}
-
-async function ocrImageBuffer(imageBuffer: ArrayBuffer): Promise<string> {
-  if (!process.env.GROQ_API_KEY) {
-    throw new Error("GROQ_API_KEY belum diset di server.");
+// PDF hasil scan/foto (nggak ada teks asli) dibaca LANGSUNG oleh Gemini.
+// Gemini bisa menerima PDF utuh, jadi nggak perlu lagi render halaman
+// satu per satu (cara lama pakai @napi-rs/canvas + Groq, dibatasi 5 halaman).
+async function ocrPdf(buffer: Buffer): Promise<string> {
+  const text = await transcribeWithGemini(
+    { mimeType: "application/pdf", data: buffer.toString("base64") },
+    "Ini adalah dokumen hasil scan. Tuliskan ulang PERSIS semua teks yang terlihat, halaman demi halaman (beri penanda '--- Halaman N ---'). Jangan menambah komentar, penjelasan, atau opini apapun — cuma transkrip teksnya saja apa adanya."
+  );
+  if (!text) {
+    throw new Error("PDF ini tidak bisa dibaca (isinya kosong atau terlalu buram).");
   }
-  const base64 = Buffer.from(imageBuffer).toString("base64");
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  const completion = await groq.chat.completions.create({
-    model: VISION_MODEL,
-    messages: [
-      {
-        role: "user",
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        content: [
-          {
-            type: "text",
-            text: "Tuliskan ulang PERSIS semua teks yang terlihat di gambar ini (hasil scan dokumen). Jangan menambah komentar, penjelasan, atau opini apapun — cuma transkrip teksnya saja apa adanya.",
-          },
-          { type: "image_url", image_url: { url: `data:image/png;base64,${base64}` } },
-        ] as any,
-      },
-    ],
-    max_tokens: 2000,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    reasoning_format: "hidden",
-  } as any);
-  return stripThinkingTags(completion.choices[0]?.message?.content ?? "");
-}
-
-async function ocrPdf(buffer: Buffer, totalPages: number): Promise<string> {
-  const pagesToProcess = Math.min(totalPages, MAX_OCR_PAGES);
-  const results: string[] = [];
-
-  for (let pageNum = 1; pageNum <= pagesToProcess; pageNum++) {
-    try {
-      const imageBuffer = await renderPageAsImage(new Uint8Array(buffer), pageNum, {
-        // unpdf: opsi ini secara RUNTIME namanya "canvasImport" (sudah
-        // divalidasi jalan), tapi file tipe TypeScript versi ini masih
-        // nulis "canvas" — ketidakcocokan bug di package-nya sendiri.
-        // "as any" di sini cuma buat lewatin type-check, perilaku aslinya
-        // tetap benar.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        canvasImport: () => import("@napi-rs/canvas"),
-        scale: 1.5,
-      } as any);
-      const pageText = await ocrImageBuffer(imageBuffer);
-      results.push(`--- Halaman ${pageNum} ---\n${pageText}`);
-    } catch (err) {
-      console.error(`OCR gagal di halaman ${pageNum}:`, err);
-      results.push(`--- Halaman ${pageNum} ---\n[gagal dibaca]`);
-    }
-  }
-
-  const note =
-    totalPages > MAX_OCR_PAGES
-      ? `\n\n[Dokumen ini punya ${totalPages} halaman, hanya ${MAX_OCR_PAGES} halaman pertama yang diproses (hasil scan/gambar butuh proses lebih berat per halaman).]`
-      : "";
-
-  return truncate(results.join("\n\n") + note);
+  return truncate(text);
 }
 
 /**
@@ -100,12 +45,12 @@ export async function extractTextFromFile(
   try {
     if (mimeType === "application/pdf" || filename.toLowerCase().endsWith(".pdf")) {
       const pdf = await getDocumentProxy(new Uint8Array(buffer));
-      const { text, totalPages } = await extractText(pdf, { mergePages: true });
+      const { text } = await extractText(pdf, { mergePages: true });
 
       // Kalau teks yang kebaca dikit banget, kemungkinan besar ini PDF hasil
       // scan/foto (isinya gambar, bukan teks asli) — coba OCR sebagai fallback.
       if (text.trim().length < 30) {
-        return await ocrPdf(buffer, totalPages);
+        return await ocrPdf(buffer);
       }
       return truncate(text);
     }

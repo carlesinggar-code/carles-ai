@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { removeImagesOfConversations, expireOldImages } from "@/lib/imageStorage";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,9 @@ async function evictOldestIfNeeded(userEmail: string) {
 
   if (data.length > MAX_CONVERSATIONS_PER_USER) {
     const idsToDelete = data.slice(MAX_CONVERSATIONS_PER_USER).map((c) => c.id);
+    // Hapus dulu file gambarnya di Storage, baru baris databasenya —
+    // kalau tidak, filenya jadi yatim dan menumpuk selamanya.
+    await removeImagesOfConversations(idsToDelete);
     await supabase.from("conversations").delete().in("id", idsToDelete);
   }
 }
@@ -63,6 +67,11 @@ export async function POST(req: NextRequest) {
   }
 
   await evictOldestIfNeeded(session.user.email);
+
+  // Pembersihan cadangan: hapus file gambar yang sudah lewat 30 hari. Tugas
+  // utamanya dikerjakan cron harian (vercel.json), ini jaring pengaman kalau
+  // cron belum aktif.
+  await expireOldImages(undefined, 25);
 
   return NextResponse.json({ conversation: data });
 }

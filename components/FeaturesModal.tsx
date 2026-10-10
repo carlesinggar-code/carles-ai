@@ -23,8 +23,8 @@ interface FeaturesModalProps {
 const FEATURES: { icon: typeof Sparkles; title: string; desc: string }[] = [
   {
     icon: Sparkles,
-    title: "AI Ganda (Gemini + Groq)",
-    desc: "Otomatis pakai Gemini dulu buat jawaban akurat, kalau lambat/gagal langsung fallback ke Groq yang lebih cepat — tanpa perlu milih manual.",
+    title: "Ditenagai Gemini",
+    desc: "Semua jawaban diproses Google Gemini dan tampil mengalir langsung, lengkap dengan status saat AI sedang mencari dan menyusun data.",
   },
   {
     icon: Search,
@@ -35,6 +35,11 @@ const FEATURES: { icon: typeof Sparkles; title: string; desc: string }[] = [
     icon: ImageIcon,
     title: "Baca & Analisis Gambar",
     desc: "Kirim foto soal/tugas, AI langsung bantu kerjakan — bukan cuma deskripsi gambar.",
+  },
+  {
+    icon: ImageIcon,
+    title: "Buat & Edit Gambar",
+    desc: "Tekan tombol ikon gambar di kolom ketik, tulis deskripsinya, dan AI membuatkan gambarnya. Lampirkan gambar untuk mengeditnya.",
   },
   {
     icon: FileText,

@@ -6,7 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
-import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2, FileText } from "lucide-react";
+import { Copy, Check, RotateCcw, Share2, Volume2, Square, Loader2, FileText, Download, ImageOff } from "lucide-react";
 import Logo from "./Logo";
 import { ChatMessage } from "@/lib/useChatHistory";
 
@@ -14,6 +14,8 @@ interface MessageBubbleProps {
   message: ChatMessage;
   onRegenerate?: (messageId: string) => void;
   isRegenerating?: boolean;
+  /** true = jawaban masih mengalir (streaming): sembunyikan tombol aksi. */
+  streaming?: boolean;
 }
 
 // Potong nama file di level STRING (bukan cuma CSS text-overflow), biar
@@ -51,6 +53,7 @@ export default function MessageBubble({
   message,
   onRegenerate,
   isRegenerating,
+  streaming,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const { data: session } = useSession();
@@ -62,6 +65,26 @@ export default function MessageBubble({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
+  }
+
+  // Unduh gambar hasil buatan AI. Lewat fetch->blob karena atribut
+  // "download" diabaikan browser untuk URL beda domain (Supabase).
+  async function handleDownload() {
+    if (!message.image) return;
+    try {
+      const res = await fetch(message.image);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `carles-ai-${Date.now()}.${blob.type.split("/")[1] || "png"}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      window.open(message.image, "_blank", "noopener,noreferrer");
+    }
   }
 
   async function handleShare() {
@@ -152,12 +175,22 @@ export default function MessageBubble({
           )}
           <div className="min-w-0 rounded-2xl px-4 py-3 text-sm leading-relaxed bg-accent text-white rounded-tr-sm">
             {message.image && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={message.image}
-                alt="Lampiran"
-                className="rounded-lg mb-2 max-h-64 object-cover"
-              />
+              <a href={message.image} target="_blank" rel="noopener noreferrer" className="block w-fit max-w-full">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={message.image}
+                  alt="Lampiran"
+                  className="rounded-lg mb-2 max-h-64 max-w-full w-auto object-contain"
+                />
+              </a>
+            )}
+            {!message.image && message.imageExpired && (
+              <p className="flex items-center gap-1.5 text-xs opacity-80 mb-2">
+                <ImageOff size={13} className="shrink-0" />
+                {message.imageNotes
+                  ? "Gambar dihapus otomatis · isinya tetap diingat AI"
+                  : "Gambar sudah dihapus otomatis"}
+              </p>
             )}
             <p className="whitespace-pre-wrap">{message.content}</p>
           </div>
@@ -181,12 +214,21 @@ export default function MessageBubble({
           style={{ backgroundColor: "var(--bg-secondary)" }}
         >
           {message.image && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={message.image}
-              alt="Lampiran"
-              className="rounded-lg mb-2 max-h-64 object-cover"
-            />
+            <a href={message.image} target="_blank" rel="noopener noreferrer" className="block w-fit max-w-full">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={message.image}
+                alt="Gambar buatan Carles.ai"
+                className="rounded-lg mb-2 max-h-96 max-w-full w-auto object-contain"
+              />
+            </a>
+          )}
+
+          {!message.image && message.imageExpired && (
+            <p className="flex items-center gap-1.5 text-xs mb-2" style={{ color: "var(--text-secondary)" }}>
+              <ImageOff size={13} className="shrink-0" />
+              Gambar sudah kedaluwarsa dan dihapus otomatis
+            </p>
           )}
 
           <div className="markdown-body min-w-0">
@@ -220,7 +262,20 @@ export default function MessageBubble({
         </div>
 
         {/* Toolbar aksi */}
+        {!streaming && (
         <div className="flex items-center gap-1 mt-1 px-1">
+            {message.image && (
+              <button
+                onClick={handleDownload}
+                className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
+                style={{ color: "var(--text-secondary)" }}
+                aria-label="Unduh gambar"
+                title="Unduh gambar"
+              >
+                <Download size={14} />
+              </button>
+            )}
+
             <button
               onClick={handleCopy}
               className="p-1.5 rounded-lg hover:bg-black/5 transition-colors"
@@ -268,6 +323,7 @@ export default function MessageBubble({
               {speaking ? <Square size={14} /> : <Volume2 size={14} />}
             </button>
         </div>
+        )}
       </div>
     </div>
   );

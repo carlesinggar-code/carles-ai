@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useSession } from "next-auth/react";
+import { v4 as uuidv4 } from "uuid";
 
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
-  image?: string; // URL (dari Supabase Storage) setelah tersimpan
+  image?: string;
+  imageExpired?: boolean;
+  imageNotes?: string;
   file?: {
     name: string;
     mimeType: string;
@@ -33,13 +37,16 @@ function mapDbMessage(row: any): ChatMessage {
     id: row.id,
     role: row.role,
     content: row.content,
-    image: row.image_url ?? undefined,
+    image: row.image_expired ? undefined : (row.image_url ?? undefined),
+    imageExpired: !!row.image_expired,
+    imageNotes: row.image_notes ?? undefined,
     file: row.file_name ? { name: row.file_name, mimeType: row.file_mime_type } : undefined,
     createdAt: new Date(row.created_at).getTime(),
   };
 }
 
 export function useChatHistory() {
+  const { data: session, status } = useSession();
   const [conversationsList, setConversationsList] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveIdState] = useState<string | null>(null);
   const [activeMessages, setActiveMessages] = useState<ChatMessage[]>([]);
@@ -47,7 +54,14 @@ export function useChatHistory() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const fetchTokenRef = useRef(0);
 
+  // Simpanan lokal untuk GUEST
+  const [localConversations, setLocalConversations] = useState<Record<string, ChatMessage[]>>({});
+
   const refreshList = useCallback(async () => {
+    if (status !== "authenticated") {
+      setLoadingList(false);
+      return;
+    }
     setLoadingList(true);
     try {
       const res = await fetch("/api/conversations");
@@ -66,16 +80,22 @@ export function useChatHistory() {
     } finally {
       setLoadingList(false);
     }
-  }, []);
+  }, [status]);
 
   useEffect(() => {
     refreshList();
-  }, [refreshList]);
+  }, [refreshList, status]);
 
   const setActiveId = useCallback((id: string | null) => {
     setActiveIdState(id);
     setActiveMessages([]);
     if (!id) return;
+
+    // Jika id adalah UUID lokal (untuk guest)
+    if (id.startsWith("local-")) {
+      setActiveMessages(localConversations[id] || []);
+      return;
+    }
 
     const token = ++fetchTokenRef.current;
     setLoadingMessages(true);
@@ -89,22 +109,44 @@ export function useChatHistory() {
       .finally(() => {
         if (token === fetchTokenRef.current) setLoadingMessages(false);
       });
-  }, []);
+  }, [localConversations]);
 
-  const createConversation = useCallback((): Promise<string> => {
-    return fetch("/api/conversations", { method: "POST" })
-      .then((res) => res.json())
-      .then((data) => {
-        const convo = data.conversation;
-        setConversationsList((prev) => [
-          { id: convo.id, title: convo.title, updatedAt: new Date(convo.updated_at).getTime() },
-          ...prev,
-        ]);
-        setActiveIdState(convo.id);
-        setActiveMessages([]);
-        return convo.id as string;
-      });
-  }, []);
+  const createConversation = useCallback(async (): Promise<string> => {
+    if (status !== "authenticated") {
+      const newId = `local-${uuidv4()}`;
+      const newConvo = {
+        id: newId,
+        title: "Percakapan Baru",
+        updatedAt: Date.now(),
+      };
+      setConversationsList((prev) => [newConvo, ...prev]);
+      setLocalConversations((prev) => ({ ...prev, [newId]: [] }));
+      setActiveIdState(newId);
+      setActiveMessages([]);
+      return newId;
+    }
+
+    try {
+      const res = await fetch("/api/conversations", { method: "POST" });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      const convo = data.conversation;
+      setConversationsList((prev) => [
+        { id: convo.id, title: convo.title, updatedAt: new Date(convo.updated_at).getTime() },
+        ...prev,
+      ]);
+      setActiveIdState(convo.id);
+      setActiveMessages([]);
+      return convo.id as string;
+    } catch (err) {
+      console.error("Gagal membuat percakapan di server:", err);
+      // Fallback ke lokal jika API gagal
+      const newId = `local-${uuidv4()}`;
+      setConversationsList((prev) => [{ id: newId, title: "Percakapan Baru (Local)", updatedAt: Date.now() }, ...prev]);
+      setActiveIdState(newId);
+      return newId;
+    }
+  }, [status]);
 
   const goToNewChat = useCallback(() => {
     setActiveIdState(null);
@@ -118,34 +160,73 @@ export function useChatHistory() {
         setActiveIdState(null);
         setActiveMessages([]);
       }
-      await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+
+      if (id.startsWith("local-")) {
+        setLocalConversations((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+      } else {
+        await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      }
     },
     [activeId]
   );
 
   const addMessage = useCallback(async (conversationId: string, message: ChatMessage) => {
-    setActiveMessages((prev) => [...prev, message]);
-
-    try {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          role: message.role,
-          content: message.content,
-          imageUrl: message.image,
-          fileName: message.file?.name,
-          fileMimeType: message.file?.mimeType,
-        }),
-      });
-      const data = await res.json();
-      if (data.message) {
-        setActiveMessages((prev) =>
-          prev.map((m) => (m.id === message.id ? mapDbMessage(data.message) : m))
-        );
+    setActiveMessages((prev) => {
+      const next = [...prev, message];
+      if (message.role === "assistant" && message.imageNotes) {
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].role === "user") {
+            next[i] = { ...prev[i], imageNotes: message.imageNotes };
+            break;
+          }
+        }
       }
-    } catch {
-      // kalau gagal simpen ke server, pesannya tetep kelihatan di sesi ini
+      return next;
+    });
+
+    if (conversationId.startsWith("local-")) {
+      setLocalConversations((prev) => ({
+        ...prev,
+        [conversationId]: [...(prev[conversationId] || []), message],
+      }));
+    } else {
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: message.role,
+            content: message.content,
+            imageUrl: message.image,
+            fileName: message.file?.name,
+            fileMimeType: message.file?.mimeType,
+            imageNotes: message.imageNotes,
+          }),
+        });
+        const data = await res.json();
+        const expiredIds: string[] = data.expiredMessageIds ?? [];
+        if (data.message || expiredIds.length > 0 || data.notesAttachedTo) {
+          setActiveMessages((prev) =>
+            prev.map((m) => {
+              let next = m;
+              if (data.message && m.id === message.id) next = mapDbMessage(data.message);
+              if (expiredIds.includes(next.id)) {
+                next = { ...next, image: undefined, imageExpired: true };
+              }
+              if (data.notesAttachedTo && next.id === data.notesAttachedTo && message.imageNotes) {
+                next = { ...next, imageNotes: message.imageNotes };
+              }
+              return next;
+            })
+          );
+        }
+      } catch {
+        // ignore
+      }
     }
 
     setConversationsList((prev) => {
@@ -163,14 +244,21 @@ export function useChatHistory() {
   const updateMessage = useCallback(
     async (conversationId: string, messageId: string, content: string) => {
       setActiveMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, content } : m)));
-      try {
-        await fetch(`/api/messages/${messageId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
-        });
-      } catch {
-        // biarin, minimal UI udah keupdate buat sesi ini
+      if (conversationId.startsWith("local-")) {
+        setLocalConversations(prev => ({
+          ...prev,
+          [conversationId]: prev[conversationId]?.map(m => m.id === messageId ? { ...m, content } : m) || []
+        }));
+      } else {
+        try {
+          await fetch(`/api/messages/${messageId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content }),
+          });
+        } catch {
+          // ignore
+        }
       }
     },
     []

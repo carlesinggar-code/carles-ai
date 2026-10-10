@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { removeImagesOfConversations } from "@/lib/imageStorage";
 
 export const runtime = "nodejs";
 
@@ -46,6 +47,20 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   const supabase = getSupabaseAdmin();
+
+  // Pastikan percakapan ini milik akun yang login SEBELUM menghapus file apa pun.
+  const { data: owned } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("id", params.id)
+    .eq("user_email", session.user.email)
+    .maybeSingle();
+  if (!owned) {
+    return NextResponse.json({ error: "Percakapan tidak ditemukan." }, { status: 404 });
+  }
+
+  // Hapus file gambar di Storage dulu, baru baris databasenya.
+  await removeImagesOfConversations([params.id]);
 
   const { error } = await supabase
     .from("conversations")

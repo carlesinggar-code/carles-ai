@@ -1,12 +1,159 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Menu, Settings, Paperclip, X, SquarePen, Mic, MicOff, FileText } from "lucide-react";
+import { Send, Menu, Settings, Paperclip, X, SquarePen, Mic, MicOff, FileText, ImagePlus, LogIn } from "lucide-react";
 import { v4 as uuidv4 } from "uuid";
+import { signIn, useSession, signOut } from "next-auth/react";
 import MessageBubble from "./MessageBubble";
 import Logo from "./Logo";
+import AuthModal from "./AuthModal";
+import QuotaModal from "./QuotaModal";
+import { resetTimeWIB } from "@/lib/quota";
 import { ChatMessage, Conversation } from "@/lib/useChatHistory";
 import { useLanguage } from "@/context/LanguageContext";
+import { Lang } from "@/lib/translations";
+
+// ---------------------------------------------------------------------
+// Teks status saat menunggu jawaban (gaya Claude/Gemini). Teks berganti
+// otomatis sesuai lama menunggu. Kalau server melaporkan hal NYATA (misal
+// "Mencari di web: harga emas"), teks itu yang ditampilkan menggantikan.
+// ---------------------------------------------------------------------
+type LoadingKind = "text" | "vision" | "file" | "image";
+
+const PHASES: Record<Lang, Record<LoadingKind, Array<[number, string]>>> = {
+  id: {
+    text: [
+      [0, "Menghubungkan ke Carles.ai..."],
+      [2, "Memahami pertanyaan Anda..."],
+      [5, "Sedang mencari data terbaru..."],
+      [10, "Menganalisis konteks..."],
+      [15, "Menyusun jawaban lengkap..."],
+      [25, "Hampir selesai, mohon tunggu..."],
+    ],
+    vision: [
+      [0, "Mengunggah gambar ke AI..."],
+      [2, "Membaca detail visual..."],
+      [6, "Menganalisis isi gambar..."],
+      [12, "Menyusun penjelasan..."],
+      [20, "Sedang memproses, sebentar lagi..."],
+    ],
+    file: [
+      [0, "Membaca lampiran file..."],
+      [3, "Mengekstrak teks dokumen..."],
+      [8, "Memahami isi dokumen..."],
+      [15, "Menyusun ringkasan/jawaban..."],
+      [25, "Masih memproses dokumen besar..."],
+    ],
+    image: [
+      [0, "Menyiapkan kanvas digital..."],
+      [3, "Memproses deskripsi gambar..."],
+      [8, "Sedang membuat gambar (AI)..."],
+      [15, "Menyempurnakan detail & warna..."],
+      [25, "Hampir selesai menyusun gambar..."],
+    ],
+  },
+  en: {
+    text: [
+      [0, "Connecting to Carles.ai..."],
+      [2, "Understanding your question..."],
+      [5, "Searching for latest data..."],
+      [10, "Analyzing context..."],
+      [15, "Putting the answer together..."],
+      [25, "Almost there, please wait..."],
+    ],
+    vision: [
+      [0, "Uploading image to AI..."],
+      [2, "Looking at visual details..."],
+      [6, "Understanding image content..."],
+      [12, "Writing the explanation..."],
+      [20, "Still processing, almost done..."],
+    ],
+    file: [
+      [0, "Reading file attachment..."],
+      [3, "Extracting document text..."],
+      [8, "Understanding the content..."],
+      [15, "Putting the answer together..."],
+      [25, "Still working on large document..."],
+    ],
+    image: [
+      [0, "Preparing digital canvas..."],
+      [3, "Processing image description..."],
+      [8, "Creating the image (AI)..."],
+      [15, "Refining details & colors..."],
+      [25, "Almost done with the image..."],
+    ],
+  },
+};
+
+function LoadingStatus({
+  kind,
+  override,
+  lang,
+}: {
+  kind: LoadingKind;
+  override: string | null;
+  lang: Lang;
+}) {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      setSeconds(Math.floor((Date.now() - started) / 1000));
+    }, 500);
+    return () => clearInterval(timer);
+  }, []);
+
+  const phases = PHASES[lang][kind];
+  let text = phases[0][1];
+  for (const [from, label] of phases) {
+    if (seconds >= from) text = label;
+  }
+  if (override) text = override;
+
+  return (
+    <div className="flex gap-3">
+      <div className="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
+        <Logo size={18} withText={false} />
+      </div>
+      <div
+        className="rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2 min-w-0"
+        style={{ backgroundColor: "var(--bg-secondary)" }}
+      >
+        <span className="flex items-center gap-1 shrink-0">
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
+          <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
+        </span>
+        <span
+          className="text-sm animate-pulse break-words min-w-0"
+          style={{ color: "var(--text-secondary)" }}
+          aria-live="polite"
+        >
+          {text}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+interface ChatPayloadMessage {
+  role: "user" | "assistant";
+  content: string;
+  image?: string;
+  /** Gambar BARU (data URL) — hanya untuk pesan terakhir; server memakainya langsung. */
+  imageData?: string;
+  imageNotes?: string;
+  imageExpired?: boolean;
+  file?: { name: string; mimeType: string; data: string };
+}
+
+interface ChatResult {
+  reply: string;
+  image?: string;
+  /** Catatan isi gambar dari AI (untuk mengingat gambar setelah file-nya dihapus). */
+  notes?: string;
+}
 
 interface ChatWindowProps {
   conversation: Conversation | null;
@@ -28,6 +175,7 @@ export default function ChatWindow({
   onOpenSidebar,
 }: ChatWindowProps) {
   const { t, lang } = useLanguage();
+  const { data: session } = useSession();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
@@ -35,6 +183,14 @@ export default function ChatWindow({
   const [isRecording, setIsRecording] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  // Mode "Buat gambar": kalau aktif, pesan berikutnya dibuatkan GAMBAR (bukan dijawab teks).
+  const [imageMode, setImageMode] = useState(false);
+  // Jawaban yang sedang mengalir (streaming) — tampil live sebelum disimpan.
+  const [streamingText, setStreamingText] = useState("");
+  const [statusOverride, setStatusOverride] = useState<string | null>(null);
+  const [loadingKind, setLoadingKind] = useState<LoadingKind>("text");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [quotaModalData, setQuotaModalData] = useState<{ reason: "user_limit" | "global_limit" } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,6 +204,11 @@ export default function ChatWindow({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [conversation?.messages.length, loading]);
+
+  // Ikut turun pelan-pelan selagi teks jawaban mengalir
+  useEffect(() => {
+    if (streamingText) bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [streamingText]);
 
   // Deteksi dukungan Web Speech API (Chrome/Edge). Kalau nggak didukung,
   // tombol mic disembunyikan sekalian daripada bikin bingung.
@@ -111,8 +272,8 @@ export default function ChatWindow({
   // Foto dari kamera HP bisa 3-8MB+ dalam format asli. Vercel Serverless
   // Function punya limit request body 4.5MB, jadi kita kompres & resize
   // dulu di browser sebelum dijadikan base64 (dikirim ke API).
-  const MAX_DIMENSION = 1280;
-  const JPEG_QUALITY = 0.7;
+  const MAX_DIMENSION = 1600;
+  const JPEG_QUALITY = 0.85;
 
   function compressImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -180,6 +341,10 @@ export default function ChatWindow({
   }
 
   async function handleIncomingFile(file: File) {
+    if (!session) {
+      setAuthModalOpen(true);
+      return;
+    }
     if (file.type.startsWith("image/")) {
       try {
         const compressed = await compressImage(file);
@@ -251,12 +416,96 @@ export default function ChatWindow({
     await handleIncomingFile(file);
   }
 
+  // Kirim ke /api/chat dan baca balasannya yang berupa stream (satu event
+  // JSON per baris): status / potongan teks / URL gambar / selesai / error.
+  async function requestChat(
+    payload: { messages: ChatPayloadMessage[]; lang: Lang; mode: "text" | "image" },
+    handlers: { onStatus?: (text: string) => void; onDelta?: (fullText: string) => void } = {}
+  ): Promise<ChatResult> {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok || !res.body) {
+      let message = t("errorMsg");
+      try {
+        const data = await res.json();
+        if (data?.error) message = data.error;
+      } catch {
+        // biarin pakai pesan default
+      }
+      throw new Error(message);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let reply = "";
+    let image: string | undefined;
+    let notes: string | undefined;
+
+    function handleLine(line: string) {
+      if (!line.trim()) return;
+      let ev: { t: string; text?: string; url?: string; message?: string };
+      try {
+        ev = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (ev.t === "status" && ev.text) {
+        handlers.onStatus?.(ev.text);
+      } else if (ev.t === "delta" && ev.text) {
+        reply += ev.text;
+        handlers.onDelta?.(reply);
+      } else if (ev.t === "image" && ev.url) {
+        image = ev.url;
+      } else if (ev.t === "notes" && ev.text) {
+        notes = ev.text;
+      } else if (ev.t === "error") {
+        throw new Error(ev.message || t("errorMsg"));
+      }
+    }
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+      }
+    }
+    handleLine(buffer);
+
+    if (!reply && !image) throw new Error(t("errorMsg"));
+    return { reply, image, notes };
+  }
+
   async function handleSend(text?: string) {
     const content = (text ?? input).trim();
     if ((!content && !pendingImage && !pendingFile) || loading) return;
 
-    const convoId = conversation?.id ?? (await onEnsureConversation());
+    if (imageMode && !session) {
+      setAuthModalOpen(true);
+      return;
+    }
+
+    const sendMode: "text" | "image" = imageMode ? "image" : "text";
+    const kind: LoadingKind = imageMode
+      ? "image"
+      : pendingImage
+        ? "vision"
+        : pendingFile
+          ? "file"
+          : "text";
+
     const messageId = uuidv4();
+    // Gambar yang baru dipilih dikirim LANGSUNG ke server (data URL) supaya
+    // dibaca AI tanpa bergantung pada unduhan dari storage.
+    const freshImageData = pendingImage ?? undefined;
 
     // File dokumen SENGAJA TIDAK disimpan permanen (cuma nama+tipenya di
     // database) — isinya udah "diambil sarinya" jadi teks pas dikirim ke
@@ -267,23 +516,32 @@ export default function ChatWindow({
     }
 
     // Gambar: upload ke Supabase Storage dulu → dapet URL publik. URL ini
-    // dipakai buat DUA hal — ditampilin permanen di riwayat (kualitas
-    // bagus, bukan thumbnail buram kayak versi localStorage dulu) DAN
-    // dikirim ke AI vision (Groq bisa baca gambar langsung dari URL).
+    // dipakai buat DUA hal — ditampilin permanen di riwayat DAN dibaca
+    // Gemini (server yang mengunduhnya dari URL ini).
     let imageUrl: string | undefined;
     if (pendingImage) {
       try {
         const uploadRes = await fetch("/api/upload-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataUrl: pendingImage }),
+          body: JSON.stringify({ dataUrl: pendingImage, lang }),
         });
         const uploadData = await uploadRes.json();
+        if (uploadRes.status === 429) {
+          // Jatah kirim gambar harian habis — beri tahu, jangan kirim apa-apa.
+          alert(uploadData.error);
+          return;
+        }
         imageUrl = uploadRes.ok ? uploadData.url : undefined;
-      } catch {
-        // gagal upload — lanjut tanpa gambar daripada gagal total
+        if (!uploadRes.ok) console.error("Upload gambar gagal:", uploadData.error);
+      } catch (err) {
+        // Gagal upload: tetap lanjut — gambar dibaca AI langsung dari kiriman
+        // ini, hanya saja tidak tersimpan di riwayat.
+        console.error("Upload gambar gagal:", err);
       }
     }
+
+    const convoId = conversation?.id ?? (await onEnsureConversation());
 
     const userMessage: ChatMessage = {
       id: messageId,
@@ -297,48 +555,60 @@ export default function ChatWindow({
     setInput("");
     setPendingImage(null);
     setPendingFile(null);
+    setStreamingText("");
+    setStatusOverride(null);
+    setLoadingKind(kind);
     setLoading(true);
 
     try {
       const fullHistory = [...(conversation?.messages ?? []), userMessage];
       const lastIndex = fullHistory.length - 1;
       const cachedFile = attachmentCacheRef.current.get(messageId)?.file;
-      const history = fullHistory.map((m, i) => ({
+      const history: ChatPayloadMessage[] = fullHistory.map((m, i) => ({
         role: m.role,
         content: m.content,
-        // Gambar: kirim URL-nya langsung, Groq bisa fetch sendiri.
-        // File: cuma disertain buat pesan TERAKHIR, pakai data asli dari
-        // cache memori (bukan history yang cuma nyimpen nama filenya).
-        image: i === lastIndex ? m.image : undefined,
+        // Semua gambar di riwayat dikirim (URL-nya saja, ringan) — server
+        // yang memilih beberapa terbaru untuk dibaca ulang Gemini.
+        image: m.image,
+        imageNotes: m.imageNotes,
+        imageExpired: m.imageExpired,
+        // Gambar baru + file dokumen cuma disertakan buat pesan TERAKHIR.
+        imageData: i === lastIndex ? freshImageData : undefined,
         file: i === lastIndex ? cachedFile : undefined,
       }));
 
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, lang }),
-      });
-
-      const data = await res.json();
-
-      const replyText: string = res.ok ? data.reply : `⚠️ ${data.error ?? t("errorMsg")}`;
+      const result = await requestChat(
+        { messages: history, lang, mode: sendMode },
+        { onStatus: setStatusOverride, onDelta: setStreamingText }
+      );
 
       const assistantMessage: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
-        content: replyText || t("errorMsg"),
+        content: result.reply || t("errorMsg"),
+        image: result.image,
+        imageNotes: result.notes,
         createdAt: Date.now(),
       };
       onNewMessage(convoId, assistantMessage);
     } catch (err) {
-      const assistantMessage: ChatMessage = {
-        id: uuidv4(),
-        role: "assistant",
-        content: `⚠️ ${t("errorMsg")}`,
-        createdAt: Date.now(),
-      };
-      onNewMessage(convoId, assistantMessage);
+      const msg = err instanceof Error ? err.message : String(err);
+      
+      // Jika errornya adalah masalah kuota (limit), tampilkan Modal, jangan masukkan ke bubble
+      if (msg.includes("limit") || msg.includes("Jatah") || msg.includes("quota")) {
+        setQuotaModalData({ reason: msg.includes("global") ? "global_limit" : "user_limit" });
+      } else {
+        const assistantMessage: ChatMessage = {
+          id: uuidv4(),
+          role: "assistant",
+          content: `⚠️ ${msg || t("errorMsg")}`,
+          createdAt: Date.now(),
+        };
+        onNewMessage(convoId, assistantMessage);
+      }
     } finally {
+      setStreamingText("");
+      setStatusOverride(null);
       setLoading(false);
     }
   }
@@ -354,27 +624,25 @@ export default function ChatWindow({
     const lastIndex = historyUpTo.length - 1;
     const lastMessage = historyUpTo[lastIndex];
     const cachedFile = attachmentCacheRef.current.get(lastMessage?.id)?.file;
-    const history = historyUpTo.map((m, i) => ({
+    const history: ChatPayloadMessage[] = historyUpTo.map((m, i) => ({
       role: m.role,
       content: m.content,
-      // Gambar udah ada URL permanennya di database — tinggal pakai lagi,
-      // nggak perlu cache khusus kayak file dokumen.
-      image: i === lastIndex ? m.image : undefined,
+      image: m.image,
+      imageNotes: m.imageNotes,
+      imageExpired: m.imageExpired,
       file: i === lastIndex ? cachedFile : undefined,
     }));
 
     setRegeneratingId(messageId);
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, lang }),
-      });
-      const data = await res.json();
-      const replyText: string = res.ok ? data.reply : `⚠️ ${data.error ?? t("errorMsg")}`;
-      onUpdateMessage(conversation.id, messageId, replyText || t("errorMsg"));
-    } catch {
-      onUpdateMessage(conversation.id, messageId, `⚠️ ${t("errorMsg")}`);
+      const result = await requestChat({ messages: history, lang, mode: "text" });
+      onUpdateMessage(conversation.id, messageId, result.reply || t("errorMsg"));
+    } catch (err) {
+      onUpdateMessage(
+        conversation.id,
+        messageId,
+        `⚠️ ${err instanceof Error && err.message ? err.message : t("errorMsg")}`
+      );
     } finally {
       setRegeneratingId(null);
     }
@@ -388,6 +656,16 @@ export default function ChatWindow({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {authModalOpen && <AuthModal onClose={() => setAuthModalOpen(false)} lang={lang} />}
+      {quotaModalData && (
+        <QuotaModal
+          onClose={() => setQuotaModalData(null)}
+          lang={lang}
+          reason={quotaModalData.reason}
+          isGuest={!session}
+          resetTime={resetTimeWIB()}
+        />
+      )}
       {isDraggingOver && (
         <div
           className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none border-4 border-dashed rounded-lg m-2"
@@ -401,20 +679,62 @@ export default function ChatWindow({
           </div>
         </div>
       )}
-      {/* Topbar (mobile) */}
+      {/* Topbar (mobile + desktop header) */}
       <div
-        className="flex md:hidden items-center justify-between px-4 py-3 border-b sticky top-0 z-20 shrink-0"
+        className="flex items-center justify-between px-4 py-3 border-b sticky top-0 z-20 shrink-0"
         style={{ borderColor: "var(--border-color)", backgroundColor: "var(--bg-primary)" }}
       >
-        <button onClick={onOpenSidebar} className="p-1.5">
-          <Menu size={20} />
-        </button>
-        <Logo size={22} />
-        <div className="flex items-center gap-1">
-          <button onClick={onNewChat} className="p-1.5" aria-label="Percakapan baru" title="Percakapan baru">
+        <div className="flex items-center gap-2">
+          <button onClick={onOpenSidebar} className="p-1.5 md:hidden">
+            <Menu size={20} />
+          </button>
+          <Logo size={22} className="hidden md:block" />
+          <Logo size={22} withText={false} className="md:hidden" />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button onClick={onNewChat} className="p-1.5 md:hidden" aria-label="Percakapan baru" title="Percakapan baru">
             <SquarePen size={20} />
           </button>
-          <button onClick={onOpenSettings} className="p-1.5" aria-label={t("settings")} title={t("settings")}>
+          
+          <div className="h-6 w-px bg-border mx-1 hidden md:block" />
+
+          {session?.user ? (
+            <div className="flex items-center gap-3 pl-2">
+              <div className="hidden sm:block text-right">
+                <p className="text-xs font-medium truncate max-w-[120px]">{session.user.name}</p>
+                <button
+                  onClick={() => signOut()}
+                  className="text-[10px] text-red-500 hover:underline"
+                >
+                  {lang === "en" ? "Sign out" : "Keluar"}
+                </button>
+              </div>
+              {session.user.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={session.user.image}
+                  alt={session.user.name ?? "User"}
+                  className="w-8 h-8 rounded-full border border-accent/20"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent text-xs font-bold">
+                  {session.user.name?.[0]?.toUpperCase()}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={() => signIn("google")}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent text-white text-xs font-medium hover:opacity-90 transition-opacity"
+            >
+              <LogIn size={14} />
+              <span>{lang === "en" ? "Sign In" : "Masuk"}</span>
+            </button>
+          )}
+
+          <button onClick={onOpenSettings} className="p-1.5 ml-1" aria-label={t("settings")} title={t("settings")}>
             <Settings size={20} />
           </button>
         </div>
@@ -450,24 +770,20 @@ export default function ChatWindow({
               <MessageBubble
                 key={m.id}
                 message={m}
-                onRegenerate={m.role === "assistant" ? handleRegenerate : undefined}
+                // Jawaban berupa gambar tidak punya tombol "Ulangi" —
+                // cukup minta lagi lewat mode Buat gambar.
+                onRegenerate={m.role === "assistant" && !m.image ? handleRegenerate : undefined}
                 isRegenerating={regeneratingId === m.id}
               />
             ))}
-            {loading && (
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
-                  <Logo size={18} withText={false} />
-                </div>
-                <div
-                  className="rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-1"
-                  style={{ backgroundColor: "var(--bg-secondary)" }}
-                >
-                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
-                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
-                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-accent inline-block" />
-                </div>
-              </div>
+            {loading && streamingText && (
+              <MessageBubble
+                message={{ id: "streaming", role: "assistant", content: streamingText, createdAt: 0 }}
+                streaming
+              />
+            )}
+            {loading && !streamingText && (
+              <LoadingStatus kind={loadingKind} override={statusOverride} lang={lang} />
             )}
             <div ref={bottomRef} />
           </div>
@@ -508,6 +824,20 @@ export default function ChatWindow({
             </div>
           )}
 
+          {imageMode && (
+            <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <ImagePlus size={14} className="text-accent shrink-0" />
+              <span>
+                {lang === "en"
+                  ? "Create-image mode is on. Describe the image, or attach one to edit it."
+                  : "Mode buat gambar aktif. Tulis deskripsi gambarnya, atau lampirkan gambar untuk diedit."}
+              </span>
+              <button onClick={() => setImageMode(false)} className="underline shrink-0">
+                {lang === "en" ? "Turn off" : "Matikan"}
+              </button>
+            </div>
+          )}
+
           {isRecording && (
             <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>
               <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -535,6 +865,24 @@ export default function ChatWindow({
               <Paperclip size={18} style={{ color: "var(--text-secondary)" }} />
             </button>
 
+            <button
+              onClick={() => {
+                if (!session) {
+                  setAuthModalOpen(true);
+                } else {
+                  setImageMode((v) => !v);
+                }
+              }}
+              className={`p-2 rounded-xl transition-colors shrink-0 ${
+                imageMode ? "bg-accent text-white" : "hover:bg-black/5"
+              }`}
+              aria-pressed={imageMode}
+              aria-label={lang === "en" ? "Create image" : "Buat gambar"}
+              title={lang === "en" ? "Create image" : "Buat gambar"}
+            >
+              <ImagePlus size={18} style={imageMode ? undefined : { color: "var(--text-secondary)" }} />
+            </button>
+
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -544,7 +892,13 @@ export default function ChatWindow({
                   handleSend();
                 }
               }}
-              placeholder={t("placeholder")}
+              placeholder={
+                imageMode
+                  ? lang === "en"
+                    ? "Describe the image you want..."
+                    : "Deskripsikan gambar yang kamu mau..."
+                  : t("placeholder")
+              }
               rows={1}
               className="flex-1 resize-none bg-transparent outline-none text-sm py-1.5 max-h-32"
             />

@@ -102,39 +102,8 @@ export default function Sidebar({
         </ul>
       </div>
 
-      {/* User profile & Settings */}
-      <div className="p-3 border-t space-y-1" style={{ borderColor: "var(--border-color)" }}>
-        {session?.user && (
-          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg">
-            {session.user.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={session.user.image}
-                alt={session.user.name ?? "User"}
-                className="w-8 h-8 rounded-full shrink-0"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center shrink-0 text-xs font-medium">
-                {session.user.name?.[0] ?? "U"}
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium truncate">{session.user.name}</p>
-              <p className="text-xs truncate" style={{ color: "var(--text-secondary)" }}>
-                {session.user.email}
-              </p>
-            </div>
-            <button
-              onClick={() => signOut({ callbackUrl: "/login" })}
-              title="Keluar"
-              className="p-1.5 rounded-md hover:bg-red-500/10 hover:text-red-500 transition-colors shrink-0"
-            >
-              <LogOut size={15} />
-            </button>
-          </div>
-        )}
-
+      {/* Settings Only at bottom */}
+      <div className="p-3 border-t" style={{ borderColor: "var(--border-color)" }}>
         <button
           onClick={onOpenSettings}
           className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm hover:bg-black/5 transition-colors"

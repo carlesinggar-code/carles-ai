@@ -23,7 +23,7 @@ export default function Home() {
     deleteConversation,
     addMessage,
     updateMessage,
-  } = useChatHistory(session?.user?.email);
+  } = useChatHistory();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -36,11 +36,7 @@ export default function Home() {
     );
   }
 
-  if (status === "unauthenticated" || !session) {
-    return <LoginPage />;
-  }
-
-  function handleEnsureConversation() {
+  async function handleEnsureConversation(): Promise<string> {
     if (activeConversation) return activeConversation.id;
     return createConversation();
   }

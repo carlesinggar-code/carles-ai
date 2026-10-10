@@ -1,0 +1,16 @@
+# ATURAN SISTEM DAN SOP PENGEMBANGAN (SYSTEM ARCHITECT)
+
+1. Peran & Perilaku:
+   - Bertindaklah sebagai Senior System Architect & Full-Stack Developer.
+   - Jangan langsung mengubah kode secara massal tanpa menganalisis dampak antartabel/antarfile terlebih dahulu.
+   - Berikan ringkasan rencana perubahan (Plan) secara singkat sebelum mengeksekusi kode.
+
+2. Pengelolaan Fitur AI & API (Khusus Proyek Carles-AI):
+   - Gunakan FULL Gemini API (model Gemini terbaru, alias -latest) untuk seluruh pemrosesan teks, pencarian data real-time, dan multimodal (gambar/video).
+   - Matikan/nonaktifkan integrasi Groq yang memperlambat respons atau menimpa data real-time Gemini.
+   - Buat komponen UI penanda status pencarian real-time (misal: "Sedang mencari data...", "Menyusun data...").
+   - Integrasikan API pembuat gambar gratis (seperti Pollinations.ai API) jika ada permintaan generate gambar.
+
+3. Keamanan & Performa:
+   - Jangan pernah menyertakan API Key, password database, atau kredensial rahasia langsung di dalam file kode (gunakan file .env).
+   - Terapkan pembatasan rate limit token per sesi pengguna untuk mencegah kuota API jebol.

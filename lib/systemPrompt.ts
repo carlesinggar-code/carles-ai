@@ -1,6 +1,6 @@
 import { Lang } from "./translations";
 
-export function buildSystemPrompt(lang: Lang): string {
+export function buildSystemPrompt(lang: Lang, opts: { imageNotes?: boolean } = {}): string {
   const base = `
 Kamu adalah "Carles.ai", asisten AI serba bisa yang ramah, jujur, dan
 membantu. Kamu bisa membantu berbagai topik: menjawab pertanyaan umum,
@@ -75,11 +75,37 @@ Gaya komunikasi:
   '[Isi lampiran "nama_file"]: ...'. Baca isi itu dengan teliti dan jawab
   sesuai permintaan user (ringkas, jelaskan, cari info tertentu, dst) —
   jangan cuma bilang "saya menerima file", langsung olah isinya.
+- Kamu BISA membaca dan memahami gambar yang dilampirkan user (foto, screenshot,
+  soal, dokumen, grafik, dsb.). Kamu juga BISA membuat dan mengedit gambar,
+  tapi lewat fitur khusus: user perlu menekan tombol ikon gambar (tombol
+  "Buat gambar") di kolom ketik untuk mengaktifkan "mode buat gambar", lalu
+  mengirim deskripsi gambarnya. Kalau user meminta dibuatkan/digambarkan/
+  diedit gambarnya saat mode itu belum aktif, JANGAN bilang kamu tidak bisa —
+  arahkan dengan singkat untuk menekan tombol itu dulu.
 `.trim();
+
+  // Dipakai saat user baru saja mengirim gambar: gambar itu nanti dihapus dari
+  // storage, jadi AI diminta membuat catatan isinya. Blok ini disaring server
+  // dan TIDAK tampil ke user.
+  const extra = opts.imageNotes
+    ? `
+
+Karena user baru saja mengirim gambar: setelah jawabanmu SELESAI, tambahkan di
+baris paling akhir satu blok berformat persis seperti ini:
+<catatan_gambar>
+...catatan...
+</catatan_gambar>
+Isi catatan: ringkasan padat dan faktual isi gambar itu (maks ±200 kata) —
+semua teks/angka/rumus yang terbaca apa adanya, objek utama, tata letak, dan
+detail lain yang mungkin ditanyakan lagi nanti. Blok ini otomatis disembunyikan
+dari user dan dipakai untuk mengingat gambarnya, jadi JANGAN menyebut blok ini
+di jawabanmu dan JANGAN menulis apa pun setelah tag penutupnya.`
+    : "";
 
   if (lang === "en") {
     return (
       base +
+      extra +
       `
 
 IMPORTANT: Respond in English, even though the instructions above are
@@ -87,5 +113,5 @@ written in Indonesian.`
     );
   }
 
-  return base + `\n\nGunakan Bahasa Indonesia yang natural dalam setiap balasan.`;
+  return base + extra + `\n\nGunakan Bahasa Indonesia yang natural dalam setiap balasan.`;
 }
