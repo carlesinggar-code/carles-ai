@@ -88,6 +88,7 @@ function parseDataUrl(dataUrl: unknown): InlineImage | null {
 }
 
 async function saveGeneratedImage(email: string, image: InlineImage): Promise<string> {
+  if (!image.data || image.data.length < 100) throw new Error("Gambar kosong, tidak disimpan.");
   const ext = image.mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
   const path = `${email}/gen-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
   const supabase = getSupabaseAdmin();
@@ -210,7 +211,7 @@ export async function POST(req: NextRequest) {
   const quota = await consumeQuota(email, kind, ip);
   if (!quota.ok) {
     return NextResponse.json(
-      { error: quotaMessage(kind, quota.reason, lang) },
+      { error: quotaMessage(kind, quota.reason, lang), reason: quota.reason },
       { status: 429 }
     );
   }

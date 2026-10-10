@@ -336,20 +336,47 @@ export async function* streamGemini(
  * Buat gambar menggunakan Pollinations.ai (Gratis & Cepat).
  * Dipakai sebagai fallback atau opsi utama pembuat gambar gratis.
  */
+/** Kenali jenis gambar dari isi file-nya (bukan dari header server, yang bisa bohong). */
+function sniffImageMime(buf: Buffer): string | null {
+  if (buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (buf.subarray(0, 3).toString("ascii") === "GIF") return "image/gif";
+  return null;
+}
+
 async function generateImagePollinations(prompt: string): Promise<InlineImage> {
   const seed = Math.floor(Math.random() * 1000000);
   const encodedPrompt = encodeURIComponent(prompt);
-  // Gunakan model 'flux' atau default di pollinations untuk hasil bagus
-  const url = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=1024&seed=${seed}&model=flux&nologo=true`;
-  
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Gagal mengambil gambar dari Pollinations.ai");
-  
-  const buffer = await res.arrayBuffer();
-  return {
-    mimeType: "image/jpeg",
-    data: Buffer.from(buffer).toString("base64"),
-  };
+  const query = `width=1024&height=1024&seed=${seed}&model=flux&nologo=true`;
+  // Dua alamat yang dikenal; kalau satu berubah/ditutup, coba yang lain.
+  const urls = [
+    `https://image.pollinations.ai/prompt/${encodedPrompt}?${query}`,
+    `https://pollinations.ai/p/${encodedPrompt}?${query}`,
+  ];
+
+  let lastErr: unknown;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
+      if (!res.ok) throw new Error(`Pollinations membalas HTTP ${res.status}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      // PENTING: server ini kadang membalas 200 tapi isinya halaman error/JSON
+      // (mis. batas pemakaian atau butuh API key). Kalau itu disimpan apa adanya,
+      // hasilnya "gambar rusak". Jadi isi file diperiksa dulu.
+      const mimeType = sniffImageMime(buffer);
+      if (!mimeType) {
+        const preview = buffer.subarray(0, 120).toString("utf8").replace(/\s+/g, " ");
+        throw new Error(`Pollinations tidak mengirim gambar (isi: "${preview}")`);
+      }
+      return { mimeType, data: buffer.toString("base64") };
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[image] Pollinations gagal di ${new URL(url).host}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  throw lastErr ?? new Error("Gagal mengambil gambar dari Pollinations.ai");
 }
 
 /**
