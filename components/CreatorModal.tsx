@@ -18,15 +18,15 @@ interface CreatorModalProps {
 
 const PROJECT_LINKS: { label: string; url: string }[] = [
   { label: "Website — Surya Abadi Transindo", url: "https://suryaabaditransindo.com" },
-  { label: "Website — Zun Tour & Travel", url: "https://zuntourtravel.smkmodels.id" },
   { label: "Game — Battle Slime", url: "https://carlesinggar.itch.io/battle-slime" },
   { label: "Game — Word Game", url: "https://carlesinggar-code.github.io/word-game/" },
   { label: "App & AI — Carles.ai", url: "https://carles-ai.vercel.app" },
+  { label: " Web App — Perpus SMK Models", url: "https://perpus.smkmodels.id" },
 ];
 
 const UPCOMING_PROJECTS = [
-  { label: "Carles Convert", desc: "Ubah ukuran, format & resolusi gambar/file" },
-  { label: "Web Healthy", desc: "Analisis SEO, UI/UX & kecepatan website lain" },
+  { label: "???", desc: "Up Comming Project" },
+  { label: "???", desc: "Coming Soon" },
 ];
 
 const CONTACTS = [

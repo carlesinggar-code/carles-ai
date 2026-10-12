@@ -190,7 +190,7 @@ export default function ChatWindow({
   const [statusOverride, setStatusOverride] = useState<string | null>(null);
   const [loadingKind, setLoadingKind] = useState<LoadingKind>("text");
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [quotaModalData, setQuotaModalData] = useState<{ reason: "user_limit" | "global_limit" } | null>(null);
+  const [quotaModalData, setQuotaModalData] = useState<{ reason: "user_limit" | "global_limit"; kind: "chat" | "image" | "upload" } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -272,8 +272,8 @@ export default function ChatWindow({
   // Foto dari kamera HP bisa 3-8MB+ dalam format asli. Vercel Serverless
   // Function punya limit request body 4.5MB, jadi kita kompres & resize
   // dulu di browser sebelum dijadikan base64 (dikirim ke API).
-  const MAX_DIMENSION = 1600;
-  const JPEG_QUALITY = 0.85;
+  const MAX_DIMENSION = 1280;
+  const JPEG_QUALITY = 0.8;
 
   function compressImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -422,21 +422,46 @@ export default function ChatWindow({
     payload: { messages: ChatPayloadMessage[]; lang: Lang; mode: "text" | "image" },
     handlers: { onStatus?: (text: string) => void; onDelta?: (fullText: string) => void } = {}
   ): Promise<ChatResult> {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      // "Failed to fetch" mentah tidak berguna bagi user — biasanya sinyal putus
+      // atau koneksi HP sedang jelek.
+      throw new Error(
+        payload.lang === "en"
+          ? "Connection problem. Check your internet and try again."
+          : "Koneksi terputus. Periksa internet kamu lalu coba kirim lagi."
+      );
+    }
 
     if (!res.ok || !res.body) {
       let message = t("errorMsg");
+      let reason: string | undefined;
+      let quotaKind: string | undefined;
       try {
         const data = await res.json();
         if (data?.error) message = data.error;
+        if (typeof data?.reason === "string") reason = data.reason;
+        if (typeof data?.kind === "string") quotaKind = data.kind;
       } catch {
         // biarin pakai pesan default
       }
-      throw new Error(message);
+      // Hanya jatah harian milik user (HTTP 429 dari server kita) yang
+      // memunculkan modal "Jatah Harian Habis".
+      const httpErr = new Error(message) as Error & {
+        quotaReason?: "user_limit" | "global_limit";
+        quotaKind?: "chat" | "image" | "upload";
+      };
+      if (res.status === 429) {
+        httpErr.quotaReason = reason === "global_limit" ? "global_limit" : "user_limit";
+        httpErr.quotaKind = quotaKind === "image" || quotaKind === "upload" ? quotaKind : "chat";
+      }
+      throw httpErr;
     }
 
     const reader = res.body.getReader();
@@ -484,7 +509,23 @@ export default function ChatWindow({
     return { reply, image, notes };
   }
 
+  // Penjaga anti-dobel: SEBELUM ini, pesan bisa terkirim berkali-kali kalau tombol
+  // kirim ditekan lagi saat gambar masih diunggah (state "loading" baru menyala
+  // setelah unggah selesai). Hasilnya pesan dobel + banyak percakapan baru.
+  const sendingRef = useRef(false);
+
   async function handleSend(text?: string) {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      await handleSendInner(text);
+    } finally {
+      sendingRef.current = false;
+      setLoading(false);
+    }
+  }
+
+  async function handleSendInner(text?: string) {
     const content = (text ?? input).trim();
     if ((!content && !pendingImage && !pendingFile) || loading) return;
 
@@ -501,6 +542,11 @@ export default function ChatWindow({
         : pendingFile
           ? "file"
           : "text";
+
+    // Nyalakan status "memproses" SEKARANG (bukan nanti setelah unggah), supaya
+    // tombol kirim langsung nonaktif dan tidak bisa ditekan dua kali.
+    setLoadingKind(kind);
+    setLoading(true);
 
     const messageId = uuidv4();
     // Gambar yang baru dipilih dikirim LANGSUNG ke server (data URL) supaya
@@ -530,6 +576,7 @@ export default function ChatWindow({
         if (uploadRes.status === 429) {
           // Jatah kirim gambar harian habis — beri tahu, jangan kirim apa-apa.
           alert(uploadData.error);
+          setLoading(false);
           return;
         }
         imageUrl = uploadRes.ok ? uploadData.url : undefined;
@@ -594,9 +641,12 @@ export default function ChatWindow({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       
-      // Jika errornya adalah masalah kuota (limit), tampilkan Modal, jangan masukkan ke bubble
-      if (msg.includes("limit") || msg.includes("Jatah") || msg.includes("quota")) {
-        setQuotaModalData({ reason: msg.includes("global") ? "global_limit" : "user_limit" });
+      // Modal HANYA untuk jatah harian user dari server kita (HTTP 429).
+      // Error kuota dari Google/Gemini tampil apa adanya di bubble chat, supaya
+      // tidak salah dikira "jatah chat kamu habis".
+      const qe = err as { quotaReason?: "user_limit" | "global_limit"; quotaKind?: "chat" | "image" | "upload" } | null;
+      if (qe?.quotaReason) {
+        setQuotaModalData({ reason: qe.quotaReason, kind: qe.quotaKind ?? "chat" });
       } else {
         const assistantMessage: ChatMessage = {
           id: uuidv4(),
@@ -662,6 +712,7 @@ export default function ChatWindow({
           onClose={() => setQuotaModalData(null)}
           lang={lang}
           reason={quotaModalData.reason}
+          kind={quotaModalData.kind}
           isGuest={!session}
           resetTime={resetTimeWIB()}
         />

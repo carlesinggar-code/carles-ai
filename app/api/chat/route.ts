@@ -10,6 +10,7 @@ import {
   classifyGeminiError,
   GeminiMessage,
   InlineImage,
+  ImageTimeoutError,
 } from "@/lib/gemini";
 import { extractTextFromFile } from "@/lib/fileExtract";
 import { IMAGE_BUCKET } from "@/lib/imageStorage";
@@ -127,6 +128,16 @@ const STATUS_TEXT = {
 function friendlyError(err: unknown, lang: Lang): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const id = lang !== "en";
+  if ((err as { code?: string } | null)?.code === "CHAT_TIMEOUT") {
+    return id
+      ? "AI terlalu lama menjawab (server Gemini sedang lambat). Jatahmu tidak terpotong — coba kirim lagi."
+      : "The AI took too long to answer (Gemini is slow right now). Your quota was not used — please try again.";
+  }
+  if (err instanceof ImageTimeoutError || (err as { code?: string } | null)?.code === "IMAGE_TIMEOUT") {
+    return id
+      ? "Pembuatan gambar terlalu lama (server gambar sedang sibuk). Jatahmu tidak terpotong — coba lagi sebentar lagi."
+      : "Image creation took too long (the image server is busy). Your quota was not used — please try again shortly.";
+  }
   switch (classifyGeminiError(err)) {
     case "quota":
       return id
@@ -153,7 +164,13 @@ function friendlyError(err: unknown, lang: Lang): string {
   }
 }
 
+// Batas total untuk satu permintaan chat. Vercel mematikan fungsi di 60 dtk dan
+// membalas 504 mentah (yang tampil sebagai "Maaf, terjadi kesalahan"). Kita
+// berhenti sedikit lebih awal supaya jatah bisa dikembalikan dan pesannya jelas.
+const CHAT_BUDGET_MS = 54_000;
+
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   // Ambil IP untuk pembatasan guest
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || "127.0.0.1";
   const session = await getServerSession(authOptions);
@@ -190,6 +207,10 @@ export async function POST(req: NextRequest) {
 
   const messages = allMessages.slice(-MAX_HISTORY_MESSAGES);
   const last = messages[messages.length - 1];
+  // Catatan diagnosa di Logs Vercel (tanpa isi pesan lengkap, hanya panjang & awalnya).
+  console.info(
+    `[chat] mulai mode=${mode} pesan=${messages.length} user=${email ? "login" : "tamu"} awal="${String(last?.content ?? "").slice(0, 30).replace(/\s+/g, " ")}"`
+  );
   const S = STATUS_TEXT[lang];
 
   // Validasi dulu SEBELUM mengambil jatah, supaya permintaan yang tidak valid tidak memotong kuota.
@@ -211,7 +232,7 @@ export async function POST(req: NextRequest) {
   const quota = await consumeQuota(email, kind, ip);
   if (!quota.ok) {
     return NextResponse.json(
-      { error: quotaMessage(kind, quota.reason, lang), reason: quota.reason },
+      { error: quotaMessage(kind, quota.reason, lang), reason: quota.reason, kind },
       { status: 429 }
     );
   }
@@ -253,7 +274,12 @@ export async function POST(req: NextRequest) {
           }
 
           send({ t: "status", kind: "draw", text: S.draw });
-          const { image, text } = await generateImage(imagePrompt, inputImages);
+          // Batas waktu cadangan: apa pun yang terjadi, berhenti SEBELUM Vercel
+          // mematikan fungsi (60 dtk), supaya jatah bisa dikembalikan di blok catch.
+          const { image, text } = await Promise.race([
+            generateImage(imagePrompt, inputImages),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new ImageTimeoutError()), 52_000)),
+          ]);
           const url = await saveGeneratedImage(email, image);
 
           delivered = true;
@@ -320,7 +346,28 @@ export async function POST(req: NextRequest) {
         const filter = wantNotes ? new NotesFilter() : null;
         const systemPrompt = buildSystemPrompt(lang, { imageNotes: wantNotes });
 
-        for await (const ev of streamGemini(systemPrompt, geminiMessages, S.sources)) {
+        const iterator = streamGemini(systemPrompt, geminiMessages, S.sources)[Symbol.asyncIterator]();
+        const TIMEOUT = Symbol("timeout");
+        while (true) {
+          const remaining = CHAT_BUDGET_MS - (Date.now() - startedAt);
+          if (remaining <= 0) {
+            void iterator.return?.(undefined);
+            throw Object.assign(new Error("Chat timeout"), { code: "CHAT_TIMEOUT" });
+          }
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const next = await Promise.race([
+            iterator.next(),
+            new Promise<typeof TIMEOUT>((resolve) => {
+              timer = setTimeout(() => resolve(TIMEOUT), remaining);
+            }),
+          ]);
+          clearTimeout(timer);
+          if (next === TIMEOUT) {
+            void iterator.return?.(undefined);
+            throw Object.assign(new Error("Chat timeout"), { code: "CHAT_TIMEOUT" });
+          }
+          if (next.done) break;
+          const ev = next.value;
           if (ev.type === "search") {
             send({ t: "status", kind: "search", text: S.search(ev.queries[0]) });
           } else if (ev.type === "delta") {
@@ -352,6 +399,7 @@ export async function POST(req: NextRequest) {
         if (!delivered) await refundQuota(email || `guest:${ip}`, kind, quota.day);
         send({ t: "error", message: friendlyError(err, lang) });
       } finally {
+        console.info(`[chat] selesai mode=${mode} dalam ${Date.now() - startedAt}ms terkirim=${delivered}`);
         controller.close();
       }
     },

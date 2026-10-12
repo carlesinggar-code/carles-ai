@@ -127,7 +127,15 @@ export function useChatHistory() {
     }
 
     try {
-      const res = await fetch("/api/conversations", { method: "POST" });
+      // Coba sekali lagi kalau gagal (sinyal HP sering putus-nyambung) sebelum
+      // menyerah ke percakapan "(Local)".
+      let res: Response;
+      try {
+        res = await fetch("/api/conversations", { method: "POST" });
+      } catch {
+        await new Promise((r) => setTimeout(r, 800));
+        res = await fetch("/api/conversations", { method: "POST" });
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const convo = data.conversation;

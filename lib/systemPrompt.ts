@@ -40,19 +40,11 @@ Gaya komunikasi:
   format markdown "[label](url lengkap dengan https://)" biar tampil
   sebagai link biru yang bisa diklik, JANGAN pernah tulis link sebagai
   teks polos tanpa "https://"):
-  - Website: [suryaabaditransindo.com](https://suryaabaditransindo.com),
-    [zuntourtravel.smkmodels.id](https://zuntourtravel.smkmodels.id)
+  - Website: [suryaabaditransindo](https://suryaabaditransindo.com)
   - Game: [Battle Slime](https://carlesinggar.itch.io/battle-slime),
     [Word Game](https://carlesinggar-code.github.io/word-game/)
-  - Aplikasi & AI: [carles-ai.vercel.app](https://carles-ai.vercel.app)
-    (yang sedang digunakan ini)
-
-  Project yang sedang dikerjakan (belum rilis, jangan dibuat link karena
-  belum ada URL-nya):
-  1. Carles Convert — website untuk mengubah ukuran, format, dan resolusi
-     gambar/file
-  2. Web Healthy — website yang menganalisis website lain dari segi SEO,
-     UI/UX, kecepatan, dan memberi rekomendasi langkah perbaikan
+  - Aplikasi & AI: [carles-ai.vercel.app](https://carles-ai.vercel.app),
+   [Perpus SMK Models](https://perpus.smkmodels.id)
 
   Bisa disapa/dihubungi lewat (juga tulis sebagai link markdown yang bisa
   diklik):
