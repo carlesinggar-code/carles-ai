@@ -94,34 +94,82 @@ const SKIPPABLE: GeminiErrorKind[] = ["quota", "missing", "overloaded"];
 
 // Model yang baru saja gagal "diistirahatkan" sebentar supaya request
 // berikutnya nggak buang waktu mencobanya lagi. (Ingatan per-instance server,
-// jadi sifatnya bantuan — bukan jaminan.)
+// jadi sifatnya bantuan — bukan jaminan.) Dicatat per KUNCI + model, karena
+// kuota Google dihitung per project.
 const cooldown = new Map<string, number>();
 
-function markCooldown(model: string, kind: GeminiErrorKind) {
+function markCooldown(slotId: string, model: string, kind: GeminiErrorKind) {
   const ms = kind === "missing" ? 30 * 60_000 : kind === "quota" ? 5 * 60_000 : 20_000;
-  cooldown.set(model, Date.now() + ms);
+  cooldown.set(`${slotId}|${model}`, Date.now() + ms);
 }
 
-function orderModels(models: string[]): string[] {
+function orderModels(models: string[], slotId: string): string[] {
   const now = Date.now();
-  const ready = models.filter((m) => (cooldown.get(m) ?? 0) <= now);
+  const ready = models.filter((m) => (cooldown.get(`${slotId}|${m}`) ?? 0) <= now);
   // Kalau semua sedang diistirahatkan, tetap coba semuanya (jangan menyerah).
   return ready.length > 0 ? ready : models;
+}
+
+// ---------------------------------------------------------------------
+// Beberapa API key (cadangan). Isi di env, pilih salah satu cara:
+//   GEMINI_API_KEYS=key1,key2        (pisahkan dengan koma)
+//   atau GEMINI_API_KEY + GEMINI_API_KEY_2 (+ GEMINI_API_KEY_3)
+// Key pertama dipakai lebih dulu. Key berikutnya HANYA dipakai kalau key
+// sebelumnya kena batas kuota (429) atau ditolak. Kuota Google dihitung per
+// PROJECT, jadi key cadangan harus dari project yang berbeda.
+// ---------------------------------------------------------------------
+interface KeySlot {
+  id: string;
+  ai: GoogleGenAI;
+}
+
+let slotPool: KeySlot[] | null = null;
+const keyCooldown = new Map<string, number>();
+
+function getKeySlots(): KeySlot[] {
+  if (clientOverride) return [{ id: "test", ai: clientOverride }];
+  if (!slotPool) {
+    const raw = [
+      ...(process.env.GEMINI_API_KEYS ?? "").split(","),
+      process.env.GEMINI_API_KEY,
+      process.env.GEMINI_API_KEY_2,
+      process.env.GEMINI_API_KEY_3,
+    ]
+      .map((k) => (k ?? "").trim())
+      .filter(Boolean);
+    const unique = Array.from(new Set(raw));
+    if (unique.length === 0) {
+      throw new Error("GEMINI_API_KEY belum diset di server.");
+    }
+    slotPool = unique.map((apiKey, i) => ({ id: `k${i + 1}`, ai: new GoogleGenAI({ apiKey }) }));
+  }
+  return slotPool;
+}
+
+/** Urutan key yang dicoba: yang tidak sedang diistirahatkan dulu; kalau semua istirahat, coba semuanya. */
+function orderedSlots(): KeySlot[] {
+  const slots = getKeySlots();
+  const now = Date.now();
+  const ready = slots.filter((k) => (keyCooldown.get(k.id) ?? 0) <= now);
+  return ready.length > 0 ? ready : slots;
+}
+
+function markKeyCooldown(slot: KeySlot, kind: GeminiErrorKind) {
+  const ms = kind === "auth" ? 30 * 60_000 : 5 * 60_000;
+  keyCooldown.set(slot.id, Date.now() + ms);
+  const total = getKeySlots().length;
+  console.warn(
+    `[gemini] kunci #${slot.id.slice(1)} dari ${total} gagal (${kind})${total > 1 ? ", pindah ke kunci cadangan" : ""}`
+  );
 }
 
 let clientOverride: GoogleGenAI | null = null;
 /** Hanya untuk pengujian otomatis. */
 export function __setClientForTests(client: GoogleGenAI | null) {
   clientOverride = client;
+  slotPool = null;
   cooldown.clear();
-}
-
-function getClient(): GoogleGenAI {
-  if (clientOverride) return clientOverride;
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY belum diset di server.");
-  }
-  return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  keyCooldown.clear();
 }
 
 // ---------------------------------------------------------------------
@@ -138,13 +186,13 @@ function modelRank(name: string): [number, number, number] {
   return [preview, tier, -ver];
 }
 
-async function discoverModels(kind: ModelKind): Promise<string[]> {
+async function discoverModels(kind: ModelKind, ai: GoogleGenAI): Promise<string[]> {
   const cached = discoveryCache[kind];
   if (cached && Date.now() - cached.at < 30 * 60_000) return cached.models;
 
   const found: string[] = [];
   try {
-    const pager = await getClient().models.list({ config: { pageSize: 100 } });
+    const pager = await ai.models.list({ config: { pageSize: 100 } });
     for await (const m of pager) {
       const name = (m.name ?? "").replace(/^models\//, "");
       if (!name.startsWith("gemini")) continue;
@@ -174,19 +222,20 @@ async function discoverModels(kind: ModelKind): Promise<string[]> {
  * kuota (429) itu masalah API key/project, bukan nama model — mencoba lebih
  * banyak model cuma membuang kuota.
  */
-function createModelQueue(base: string[], kind: ModelKind) {
-  const list = [...orderModels(base)];
+function createModelQueue(base: string[], kind: ModelKind, slot: KeySlot) {
+  const list = [...orderModels(base, slot.id)];
   let i = 0;
   let discovered = false;
   let onlyMissing = true;
   return {
-    fail(k: GeminiErrorKind) {
+    fail(k: GeminiErrorKind, model: string) {
+      markCooldown(slot.id, model, k);
       if (k !== "missing") onlyMissing = false;
     },
     async next(): Promise<string | null> {
       if (i >= list.length && !discovered && onlyMissing) {
         discovered = true;
-        for (const m of await discoverModels(kind)) if (!list.includes(m)) list.push(m);
+        for (const m of await discoverModels(kind, slot.ai)) if (!list.includes(m)) list.push(m);
       }
       return i < list.length ? list[i++] : null;
     },
@@ -232,11 +281,40 @@ export async function* streamGemini(
   messages: GeminiMessage[],
   sourcesLabel = "Sumber"
 ): AsyncGenerator<GeminiStreamEvent> {
-  const ai = getClient();
+  let lastErr: unknown;
+  let delivered = false;
+  for (const slot of orderedSlots()) {
+    try {
+      for await (const ev of streamWithSlot(slot, systemPrompt, messages, sourcesLabel)) {
+        if (ev.type === "delta") delivered = true;
+        yield ev;
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      const kind = classifyGeminiError(err);
+      // Belum ada teks yang terkirim + kuota/kunci bermasalah → coba kunci cadangan.
+      if (!delivered && (kind === "quota" || kind === "auth")) {
+        markKeyCooldown(slot, kind);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error("Semua kunci Gemini gagal.");
+}
+
+async function* streamWithSlot(
+  slot: KeySlot,
+  systemPrompt: string,
+  messages: GeminiMessage[],
+  sourcesLabel: string
+): AsyncGenerator<GeminiStreamEvent> {
+  const ai = slot.ai;
   const contents = toContents(messages);
   let lastErr: unknown;
 
-  const queue = createModelQueue(GEMINI_TEXT_MODELS, "text");
+  const queue = createModelQueue(GEMINI_TEXT_MODELS, "text", slot);
   let model: string | null;
   while ((model = await queue.next())) {
     const variants = needsSearch(messages) ? [true, false] : [false];
@@ -320,8 +398,7 @@ export async function* streamGemini(
         if ((kind === "badtool" || kind === "quota") && useSearch) continue;
         if (SKIPPABLE.includes(kind)) {
           console.warn(`[gemini] ${model} gagal (${kind}), coba model berikutnya`);
-          markCooldown(model, kind);
-          queue.fail(kind);
+          queue.fail(kind, model);
           break; // lanjut ke model berikutnya
         }
         throw err;
@@ -346,7 +423,19 @@ function sniffImageMime(buf: Buffer): string | null {
   return null;
 }
 
-async function generateImagePollinations(prompt: string): Promise<InlineImage> {
+/** Batas waktu total pembuatan gambar. Vercel Hobby mematikan fungsi di 60 detik —
+ *  kalau terlewat, jatah sudah terpotong tapi tidak dikembalikan. Jadi harus selesai
+ *  (atau gagal dengan rapi) sebelum itu. */
+export const IMAGE_BUDGET_MS = 48_000;
+
+export class ImageTimeoutError extends Error {
+  code = "IMAGE_TIMEOUT";
+  constructor() {
+    super("Pembuatan gambar terlalu lama.");
+  }
+}
+
+async function generateImagePollinations(prompt: string, deadline: number): Promise<InlineImage> {
   const seed = Math.floor(Math.random() * 1000000);
   const encodedPrompt = encodeURIComponent(prompt);
   const query = `width=1024&height=1024&seed=${seed}&model=flux&nologo=true`;
@@ -358,8 +447,11 @@ async function generateImagePollinations(prompt: string): Promise<InlineImage> {
 
   let lastErr: unknown;
   for (const url of urls) {
+    const remaining = deadline - Date.now();
+    if (remaining < 3_000) break;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(45_000) });
+      // Alamat pertama maksimal 28 detik supaya alamat cadangan masih sempat dicoba.
+      const res = await fetch(url, { signal: AbortSignal.timeout(Math.min(remaining, 28_000)) });
       if (!res.ok) throw new Error(`Pollinations membalas HTTP ${res.status}`);
       const buffer = Buffer.from(await res.arrayBuffer());
       // PENTING: server ini kadang membalas 200 tapi isinya halaman error/JSON
@@ -379,6 +471,125 @@ async function generateImagePollinations(prompt: string): Promise<InlineImage> {
   throw lastErr ?? new Error("Gagal mengambil gambar dari Pollinations.ai");
 }
 
+// ---------------------------------------------------------------------
+// Cloudflare Workers AI — pembuat gambar gratis (10.000 "neurons"/hari untuk
+// seluruh akun, tanpa kartu kredit, tanpa watermark). Env yang dibutuhkan:
+//   CLOUDFLARE_ACCOUNT_ID   CLOUDFLARE_API_TOKEN  (izin: Workers AI)
+//   CLOUDFLARE_IMAGE_MODELS (opsional, pisahkan koma, yang terbaik di depan)
+// ---------------------------------------------------------------------
+const CF_DEFAULT_MODELS = [
+  "@cf/black-forest-labs/flux-1-schnell",
+  "@cf/bytedance/stable-diffusion-xl-lightning",
+  "@cf/stabilityai/stable-diffusion-xl-base-1.0",
+];
+
+function cloudflareConfigured(): boolean {
+  return !!(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() && process.env.CLOUDFLARE_API_TOKEN?.trim());
+}
+
+/**
+ * Model gambar bekerja jauh lebih akurat dengan prompt bahasa Inggris yang
+ * deskriptif. Prompt user (biasanya bahasa Indonesia) diterjemahkan/dirapikan
+ * dulu oleh Gemini. Kalau gagal/lambat, pakai prompt asli — jangan sampai
+ * menghambat pembuatan gambar.
+ */
+async function toEnglishImagePrompt(prompt: string): Promise<string> {
+  try {
+    const slot = orderedSlots()[0];
+    const model = GEMINI_TEXT_MODELS[0];
+    const response = await slot.ai.models.generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                "Rewrite the user's image request as ONE clear, detailed English prompt for a text-to-image model. " +
+                "Keep every object, color, count, style and setting the user asked for. Do not add text or watermarks. " +
+                "Output ONLY the prompt, no quotes, no explanation.\n\nUser request: " +
+                prompt,
+            },
+          ],
+        },
+      ],
+      config: {
+        maxOutputTokens: 400,
+        abortSignal: AbortSignal.timeout(9_000),
+        ...(thinkingTuningOk ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
+      },
+    });
+    const out = (response.text ?? "").trim().replace(/^["']|["']$/g, "");
+    return out.length >= 3 && out.length <= 1500 ? out : prompt;
+  } catch (err) {
+    console.warn("[image] gagal merapikan prompt, pakai prompt asli:", err instanceof Error ? err.message : err);
+    return prompt;
+  }
+}
+
+async function generateImageCloudflare(prompt: string, deadline: number): Promise<InlineImage> {
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID!.trim();
+  const token = process.env.CLOUDFLARE_API_TOKEN!.trim();
+  const models = (process.env.CLOUDFLARE_IMAGE_MODELS ?? "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+  const list = models.length > 0 ? models : CF_DEFAULT_MODELS;
+
+  const englishPrompt = await toEnglishImagePrompt(prompt);
+  let lastErr: unknown;
+
+  for (const model of list) {
+    const remaining = deadline - Date.now();
+    if (remaining < 4_000) break;
+    try {
+      const isFlux = /flux/i.test(model);
+      const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/ai/run/${model}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(
+          isFlux
+            ? { prompt: englishPrompt, steps: 6 }
+            : { prompt: englishPrompt, num_steps: 20, width: 1024, height: 1024 }
+        ),
+        signal: AbortSignal.timeout(Math.min(remaining, 30_000)),
+      });
+
+      const type = res.headers.get("content-type") ?? "";
+      let buffer: Buffer;
+      if (type.includes("application/json")) {
+        // FLUX membalas JSON: { result: { image: "<base64>" }, success, errors }
+        const json = (await res.json()) as {
+          success?: boolean;
+          result?: { image?: string };
+          errors?: { message?: string }[];
+        };
+        if (!res.ok || json.success === false || !json.result?.image) {
+          const msg = json.errors?.map((e) => e.message).filter(Boolean).join("; ") || `HTTP ${res.status}`;
+          throw Object.assign(new Error(`Cloudflare menolak: ${msg}`), { status: res.status });
+        }
+        buffer = Buffer.from(json.result.image, "base64");
+      } else {
+        // Model Stable Diffusion membalas langsung berupa file gambar.
+        if (!res.ok) throw Object.assign(new Error(`Cloudflare HTTP ${res.status}`), { status: res.status });
+        buffer = Buffer.from(await res.arrayBuffer());
+      }
+
+      const mimeType = sniffImageMime(buffer);
+      if (!mimeType) throw new Error("Cloudflare tidak mengirim gambar yang valid.");
+      console.info(`[image] dibuat oleh Cloudflare ${model}`);
+      return { mimeType, data: buffer.toString("base64") };
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[image] Cloudflare ${model} gagal:`, err instanceof Error ? err.message : err);
+      const status = (err as { status?: number } | undefined)?.status;
+      // 401/403: token/ID salah — model lain pun akan gagal, hentikan.
+      if (status === 401 || status === 403) break;
+    }
+  }
+  throw lastErr ?? new Error("Cloudflare gagal membuat gambar.");
+}
+
 /**
  * Buat gambar dari deskripsi teks. Mencoba Gemini dulu, jika gagal atau
  * model tidak tersedia, gunakan Pollinations.ai sebagai fallback gratis.
@@ -390,26 +601,41 @@ export async function generateImage(
   // Jika ada input gambar (mode edit), WAJIB pakai Gemini karena Pollinations
   // hanya mendukung text-to-image murni lewat URL.
   const isEditing = inputImages.length > 0;
+  const deadline = Date.now() + IMAGE_BUDGET_MS;
 
   if (!isEditing) {
-    // Coba gunakan Pollinations dulu jika dikonfigurasi sebagai utama,
-    // atau jika ingin menghemat kuota Gemini. Di sini kita jadikan opsi utama
-    // untuk memenuhi permintaan "Integrasi API pembuat gambar gratis".
-    try {
-      console.info("[image] Menggunakan Pollinations.ai");
-      const image = await generateImagePollinations(prompt);
-      return { image, text: "" };
-    } catch (err) {
-      console.warn("[image] Pollinations gagal, mencoba Gemini...", err);
+    // 1) Cloudflare Workers AI (gratis, tanpa watermark) kalau sudah dikonfigurasi.
+    if (cloudflareConfigured()) {
+      try {
+        const image = await generateImageCloudflare(prompt, deadline);
+        return { image, text: "" };
+      } catch (err) {
+        console.warn("[image] Cloudflare gagal, mencoba cadangan...", err instanceof Error ? err.message : err);
+      }
+    }
+    // 2) Pollinations sebagai cadangan (bisa ada watermark). Matikan dengan
+    //    POLLINATIONS_ENABLED=false kalau tidak mau memakainya sama sekali.
+    if (process.env.POLLINATIONS_ENABLED !== "false") {
+      try {
+        console.info("[image] Menggunakan Pollinations.ai");
+        const image = await generateImagePollinations(prompt, deadline);
+        return { image, text: "" };
+      } catch (err) {
+        console.warn("[image] Pollinations gagal, mencoba Gemini...", err);
+      }
     }
   }
 
-  const ai = getClient();
+  // Model gambar Gemini hanya jalan di akun berbayar, jadi cukup kunci utama.
+  const slot = getKeySlots()[0];
+  const ai = slot.ai;
   let lastErr: unknown;
 
-  const queue = createModelQueue(GEMINI_IMAGE_MODELS, "image");
+  const queue = createModelQueue(GEMINI_IMAGE_MODELS, "image", slot);
   let model: string | null;
   while ((model = await queue.next())) {
+    const remaining = deadline - Date.now();
+    if (remaining < 6_000) throw new ImageTimeoutError();
     try {
       const response = await ai.models.generateContent({
         model,
@@ -424,7 +650,7 @@ export async function generateImage(
             ],
           },
         ],
-        config: { responseModalities: ["TEXT", "IMAGE"] },
+        config: { responseModalities: ["TEXT", "IMAGE"], abortSignal: AbortSignal.timeout(remaining) },
       });
 
       let image: InlineImage | null = null;
@@ -455,8 +681,7 @@ export async function generateImage(
       const kind = classifyGeminiError(err);
       if (SKIPPABLE.includes(kind)) {
         console.warn(`[gemini] ${model} gagal (${kind}), coba model gambar berikutnya`);
-        markCooldown(model, kind);
-        queue.fail(kind);
+        queue.fail(kind, model);
         continue;
       }
       throw err;
@@ -473,10 +698,32 @@ export async function transcribeWithGemini(
   file: InlineImage,
   instruction: string
 ): Promise<string> {
-  const ai = getClient();
+  let lastErr: unknown;
+  for (const slot of orderedSlots()) {
+    try {
+      return await transcribeWithSlot(slot, file, instruction);
+    } catch (err) {
+      lastErr = err;
+      const kind = classifyGeminiError(err);
+      if (kind === "quota" || kind === "auth") {
+        markKeyCooldown(slot, kind);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error("Semua kunci Gemini gagal.");
+}
+
+async function transcribeWithSlot(
+  slot: KeySlot,
+  file: InlineImage,
+  instruction: string
+): Promise<string> {
+  const ai = slot.ai;
   let lastErr: unknown;
 
-  const queue = createModelQueue(GEMINI_TEXT_MODELS, "text");
+  const queue = createModelQueue(GEMINI_TEXT_MODELS, "text", slot);
   let model: string | null;
   while ((model = await queue.next())) {
     try {
@@ -498,8 +745,7 @@ export async function transcribeWithGemini(
       lastErr = err;
       const kind = classifyGeminiError(err);
       if (SKIPPABLE.includes(kind)) {
-        markCooldown(model, kind);
-        queue.fail(kind);
+        queue.fail(kind, model);
         continue;
       }
       throw err;
