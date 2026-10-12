@@ -688,11 +688,19 @@ export default function ChatWindow({
       const result = await requestChat({ messages: history, lang, mode: "text" });
       onUpdateMessage(conversation.id, messageId, result.reply || t("errorMsg"));
     } catch (err) {
-      onUpdateMessage(
-        conversation.id,
-        messageId,
-        `⚠️ ${err instanceof Error && err.message ? err.message : t("errorMsg")}`
-      );
+      // Jawaban lama TETAP dipertahankan (sebelumnya ditimpa teks error, jadi
+      // jawaban yang bagus hilang). Jatah habis → modal; error lain → bubble baru.
+      const qe = err as { quotaReason?: "user_limit" | "global_limit"; quotaKind?: "chat" | "image" | "upload" } | null;
+      if (qe?.quotaReason) {
+        setQuotaModalData({ reason: qe.quotaReason, kind: qe.quotaKind ?? "chat" });
+      } else {
+        onNewMessage(conversation.id, {
+          id: uuidv4(),
+          role: "assistant",
+          content: `⚠️ ${err instanceof Error && err.message ? err.message : t("errorMsg")}`,
+          createdAt: Date.now(),
+        });
+      }
     } finally {
       setRegeneratingId(null);
     }

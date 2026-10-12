@@ -8,11 +8,12 @@ interface QuotaModalProps {
   onClose: () => void;
   lang: Lang;
   reason: "user_limit" | "global_limit";
+  kind?: "chat" | "image" | "upload";
   isGuest: boolean;
   resetTime: string;
 }
 
-export default function QuotaModal({ onClose, lang, reason, isGuest, resetTime }: QuotaModalProps) {
+export default function QuotaModal({ onClose, lang, reason, kind = "chat", isGuest, resetTime }: QuotaModalProps) {
   const isEn = lang === "en";
 
   return (
@@ -26,15 +27,25 @@ export default function QuotaModal({ onClose, lang, reason, isGuest, resetTime }
         </div>
         
         <h2 className="text-xl font-semibold mb-2">
-          {isEn ? "Daily Limit Reached" : "Jatah Harian Habis"}
+          {kind === "image"
+            ? (isEn ? "Daily Image Limit Reached" : "Jatah Gambar Harian Habis")
+            : kind === "upload"
+              ? (isEn ? "Daily Upload Limit Reached" : "Jatah Kirim Gambar Habis")
+              : (isEn ? "Daily Limit Reached" : "Jatah Harian Habis")}
         </h2>
         
         <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
-          {reason === "global_limit" 
+          {reason === "global_limit"
             ? (isEn ? "The global image quota is exhausted for today." : "Jatah pembuatan gambar global hari ini sudah habis.")
-            : (isEn 
-                ? `You've reached your daily chat limit.${isGuest ? " Guest limit is lower than registered users." : ""}` 
-                : `Kamu telah mencapai batas chat harian.${isGuest ? " Jatah tamu lebih sedikit daripada pengguna terdaftar." : ""}`)}
+            : kind === "image"
+              ? (isEn
+                  ? `You've reached your daily image creation limit.${isGuest ? " Sign in to create images." : ""}`
+                  : `Kamu telah mencapai batas pembuatan gambar harian.${isGuest ? " Login dulu untuk membuat gambar." : ""}`)
+              : kind === "upload"
+                ? (isEn ? "You've reached your daily limit for sending images." : "Kamu telah mencapai batas kirim gambar harian.")
+                : (isEn
+                    ? `You've reached your daily chat limit.${isGuest ? " Guest limit is lower than registered users." : ""}`
+                    : `Kamu telah mencapai batas chat harian.${isGuest ? " Jatah tamu lebih sedikit daripada pengguna terdaftar." : ""}`)}
         </p>
 
         <div className="flex items-center justify-center gap-2 mb-8 text-xs font-medium px-4 py-2 rounded-full bg-accent/10 text-accent w-fit mx-auto">

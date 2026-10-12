@@ -33,8 +33,12 @@ self.addEventListener("fetch", (event) => {
     fetch(request)
       .then((response) => {
         // Simpan salinan sukses ke cache buat jaga-jaga kalau nanti offline
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        // Hanya simpan respons SUKSES milik sendiri. Dulu halaman error (500/504)
+        // ikut tersimpan lalu tampil lagi saat offline.
+        if (response.ok && response.type === "basic") {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+        }
         return response;
       })
       .catch(() =>

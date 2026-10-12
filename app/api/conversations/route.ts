@@ -71,7 +71,15 @@ export async function POST(req: NextRequest) {
   // Pembersihan cadangan: hapus file gambar yang sudah lewat 30 hari. Tugas
   // utamanya dikerjakan cron harian (vercel.json), ini jaring pengaman kalau
   // cron belum aktif.
-  await expireOldImages(undefined, 25);
+  // Cukup sesekali (±1 dari 10 permintaan): dulu dijalankan SETIAP kali sehingga
+  // membuat percakapan baru lambat di HP dan kadang gagal (jadi "(Local)").
+  if (Math.random() < 0.1) {
+    try {
+      await expireOldImages(undefined, 25);
+    } catch (err) {
+      console.error("[storage] pembersihan cadangan gagal:", err);
+    }
+  }
 
   return NextResponse.json({ conversation: data });
 }
