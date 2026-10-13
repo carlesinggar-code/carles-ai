@@ -78,7 +78,30 @@ export type GeminiErrorKind =
   | "auth" // API key salah / ditolak
   | "other";
 
+/** Sebuah percobaan tidak mengeluarkan teks sama sekali dalam batas waktunya (macet/lambat). */
+export class AttemptTimeoutError extends Error {
+  code = "GEMINI_TIMEOUT";
+  constructor(model: string, ms: number) {
+    super(`Model ${model} tidak menjawab dalam ${Math.round(ms / 1000)} detik.`);
+  }
+}
+
+// Batas waktu (dalam milidetik). Kalau sebuah percobaan belum mengeluarkan teks
+// pertama dalam waktu ini, dibatalkan lalu pindah ke model/kunci berikutnya —
+// supaya satu panggilan yang macet tidak menghabiskan seluruh jatah waktu 54 dtk.
+// Semua angka bisa dikalikan lewat GEMINI_TIMEOUT_SCALE (mis. 2 kalau koneksi
+// server lambat, 0.1 untuk pengujian otomatis).
+const FIRST_CHUNK_SEARCH_MS = 13_000;
+const FIRST_CHUNK_PLAIN_MS = 10_000;
+const STREAM_BUDGET_MS = 50_000;
+const MIN_ATTEMPT_MS = 3_500;
+function timeScale(): number {
+  const n = Number(process.env.GEMINI_TIMEOUT_SCALE);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
 export function classifyGeminiError(err: unknown): GeminiErrorKind {
+  if ((err as { code?: string } | null)?.code === "GEMINI_TIMEOUT") return "overloaded";
   const e = err as { status?: number; code?: number; message?: string } | undefined;
   const status = e?.status ?? e?.code;
   const msg = String(e?.message ?? err ?? "");
@@ -127,7 +150,7 @@ let slotPool: KeySlot[] | null = null;
 const keyCooldown = new Map<string, number>();
 
 function getKeySlots(): KeySlot[] {
-  if (clientOverride) return [{ id: "test", ai: clientOverride }];
+  if (clientOverride) return clientOverride.map((ai, i) => ({ id: `t${i + 1}`, ai }));
   if (!slotPool) {
     const raw = [
       ...(process.env.GEMINI_API_KEYS ?? "").split(","),
@@ -155,7 +178,8 @@ function orderedSlots(): KeySlot[] {
 }
 
 function markKeyCooldown(slot: KeySlot, kind: GeminiErrorKind) {
-  const ms = kind === "auth" ? 30 * 60_000 : 5 * 60_000;
+  // auth: lama. quota: sedang. macet/lambat: sebentar saja (mungkin cuma sesaat).
+  const ms = kind === "auth" ? 30 * 60_000 : kind === "quota" ? 5 * 60_000 : 45_000;
   keyCooldown.set(slot.id, Date.now() + ms);
   const total = getKeySlots().length;
   console.warn(
@@ -163,10 +187,10 @@ function markKeyCooldown(slot: KeySlot, kind: GeminiErrorKind) {
   );
 }
 
-let clientOverride: GoogleGenAI | null = null;
-/** Hanya untuk pengujian otomatis. */
-export function __setClientForTests(client: GoogleGenAI | null) {
-  clientOverride = client;
+let clientOverride: GoogleGenAI[] | null = null;
+/** Hanya untuk pengujian otomatis (boleh beberapa klien = beberapa kunci). */
+export function __setClientForTests(client: GoogleGenAI | GoogleGenAI[] | null) {
+  clientOverride = client ? (Array.isArray(client) ? client : [client]) : null;
   slotPool = null;
   cooldown.clear();
   keyCooldown.clear();
@@ -283,9 +307,13 @@ export async function* streamGemini(
 ): AsyncGenerator<GeminiStreamEvent> {
   let lastErr: unknown;
   let delivered = false;
-  for (const slot of orderedSlots()) {
+  const deadline = Date.now() + STREAM_BUDGET_MS * timeScale();
+  const slots = orderedSlots();
+  for (let si = 0; si < slots.length; si++) {
+    const slot = slots[si];
+    if (si > 0 && deadline - Date.now() < MIN_ATTEMPT_MS * timeScale()) break;
     try {
-      for await (const ev of streamWithSlot(slot, systemPrompt, messages, sourcesLabel)) {
+      for await (const ev of streamWithSlot(slot, systemPrompt, messages, sourcesLabel, deadline, si < slots.length - 1)) {
         if (ev.type === "delta") delivered = true;
         yield ev;
       }
@@ -293,8 +321,9 @@ export async function* streamGemini(
     } catch (err) {
       lastErr = err;
       const kind = classifyGeminiError(err);
-      // Belum ada teks yang terkirim + kuota/kunci bermasalah → coba kunci cadangan.
-      if (!delivered && (kind === "quota" || kind === "auth")) {
+      // Belum ada teks yang terkirim + kunci ini bermasalah (kuota habis, ditolak,
+      // server penuh, atau macet) → coba kunci cadangan.
+      if (!delivered && (kind === "quota" || kind === "auth" || kind === "overloaded")) {
         markKeyCooldown(slot, kind);
         continue;
       }
@@ -308,11 +337,18 @@ async function* streamWithSlot(
   slot: KeySlot,
   systemPrompt: string,
   messages: GeminiMessage[],
-  sourcesLabel: string
+  sourcesLabel: string,
+  deadline: number,
+  hasBackupKey: boolean
 ): AsyncGenerator<GeminiStreamEvent> {
   const ai = slot.ai;
   const contents = toContents(messages);
   let lastErr: unknown;
+  // Permintaan "berat" (ada gambar / teks panjang) wajar butuh waktu lebih lama.
+  const heavy =
+    messages.some((m) => m.images?.length) ||
+    messages.reduce((n, m) => n + m.content.length, 0) > 8000;
+  const scale = timeScale() * (heavy ? 1.5 : 1);
 
   const queue = createModelQueue(GEMINI_TEXT_MODELS, "text", slot);
   let model: string | null;
@@ -322,11 +358,25 @@ async function* streamWithSlot(
       const useSearch = variants[vi];
       const startedAt = Date.now();
       let gotText = false;
+
+      const remaining = deadline - startedAt;
+      if (remaining < MIN_ATTEMPT_MS * timeScale()) {
+        throw lastErr ?? new AttemptTimeoutError(model, 0);
+      }
+      const limit = Math.min((useSearch ? FIRST_CHUNK_SEARCH_MS : FIRST_CHUNK_PLAIN_MS) * scale, remaining);
+      const ctrl = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        ctrl.abort();
+      }, limit);
+
       try {
         const stream = await ai.models.generateContentStream({
           model,
           contents,
           config: {
+            abortSignal: ctrl.signal,
             systemInstruction: systemPrompt,
             // Model terbaru kadang "berpikir" dulu dan token berpikir ikut
             // dihitung ke batas ini — makanya dilonggarkan.
@@ -339,7 +389,14 @@ async function* streamWithSlot(
         const announced = new Set<string>();
         const sources = new Map<string, string>(); // uri -> title
 
+        let firstChunk = true;
         for await (const chunk of stream) {
+          // Chunk pertama tiba = Gemini hidup. Batas waktu awal dilepas; kalau macet
+          // di tengah jawaban, yang berlaku batas total di route (54 dtk).
+          if (firstChunk) {
+            clearTimeout(timer);
+            firstChunk = false;
+          }
           const grounding = chunk.candidates?.[0]?.groundingMetadata;
 
           // "Lagi cari apa" — hanya dikirim kalau Gemini benar-benar
@@ -379,10 +436,25 @@ async function* streamWithSlot(
         }
         console.info(`[gemini] dijawab oleh ${model}${useSearch ? " (+search)" : ""}`);
         return;
-      } catch (err) {
+      } catch (rawErr) {
+        // Dibatalkan oleh batas waktu kita (bukan error dari Google)?
+        const timeoutHit = timedOut && !gotText;
+        const err = timeoutHit ? new AttemptTimeoutError(model, limit) : rawErr;
         lastErr = err;
         // Teks sudah sebagian terkirim ke user → nggak bisa ganti model di tengah jalan.
         if (gotText) throw err;
+
+        if (timeoutHit) {
+          console.warn(
+            `[gemini] ${model}${useSearch ? " (+search)" : ""} tidak mengeluarkan teks dalam ${Math.round(limit)}ms, dibatalkan`
+          );
+          // Mungkin Google Search yang lambat → sekali lagi tanpa search di model yang sama.
+          if (useSearch) continue;
+          queue.fail("overloaded", model);
+          // Ada kunci cadangan → pindah kunci SEKARANG, jangan habiskan waktu di sini.
+          if (hasBackupKey) throw err;
+          break; // satu kunci saja → coba model berikutnya
+        }
 
         const kind = classifyGeminiError(err);
         const errStatus = (err as { status?: number } | undefined)?.status;
@@ -402,6 +474,8 @@ async function* streamWithSlot(
           break; // lanjut ke model berikutnya
         }
         throw err;
+      } finally {
+        clearTimeout(timer);
       }
     }
   }
