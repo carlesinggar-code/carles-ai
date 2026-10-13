@@ -14,28 +14,30 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   const supabase = getSupabaseAdmin();
 
-  // Pastiin percakapan ini emang punya akun yang lagi login (bukan punya
-  // orang lain) — penyaringan "punya siapa" dilakuin di sini, di server.
-  const { data: convo, error: convoErr } = await supabase
-    .from("conversations")
-    .select("*")
-    .eq("id", params.id)
-    .eq("user_email", session.user.email)
-    .single();
+  // Dua query jalan BERSAMAAN (dulu berurutan = 2x lebih lama). Kepemilikan
+  // tetap dicek: kalau percakapan bukan milik akun ini, pesan tidak dikirim.
+  const [convoRes, msgRes] = await Promise.all([
+    supabase
+      .from("conversations")
+      .select("id, title, created_at, updated_at")
+      .eq("id", params.id)
+      .eq("user_email", session.user.email)
+      .maybeSingle(),
+    supabase
+      .from("messages")
+      .select("id, role, content, image_url, image_expired, image_notes, file_name, file_mime_type, created_at")
+      .eq("conversation_id", params.id)
+      .order("created_at", { ascending: true }),
+  ]);
 
-  if (convoErr || !convo) {
+  const convo = convoRes.data;
+  if (convoRes.error || !convo) {
     return NextResponse.json({ error: "Percakapan tidak ditemukan." }, { status: 404 });
   }
-
-  const { data: messages, error: msgErr } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("conversation_id", params.id)
-    .order("created_at", { ascending: true });
-
-  if (msgErr) {
-    return NextResponse.json({ error: msgErr.message }, { status: 500 });
+  if (msgRes.error) {
+    return NextResponse.json({ error: msgRes.error.message }, { status: 500 });
   }
+  const messages = msgRes.data;
 
   return NextResponse.json({ conversation: convo, messages });
 }

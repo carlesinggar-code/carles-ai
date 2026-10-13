@@ -178,6 +178,10 @@ export default function ChatWindow({
   const { data: session } = useSession();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // Percakapan mana yang sedang menunggu jawaban. Animasi "mengetik"/teks yang
+  // mengalir hanya tampil di percakapan ITU, bukan di percakapan lain yang
+  // kebetulan sedang dibuka.
+  const [sendingConvoId, setSendingConvoId] = useState<string | null>(null);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<{ name: string; mimeType: string; data: string } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -519,6 +523,7 @@ export default function ChatWindow({
   // kirim ditekan lagi saat gambar masih diunggah (state "loading" baru menyala
   // setelah unggah selesai). Hasilnya pesan dobel + banyak percakapan baru.
   const sendingRef = useRef(false);
+  const showLoadingHere = loading && (sendingConvoId === null || sendingConvoId === conversation?.id);
 
   async function handleSend(text?: string) {
     if (sendingRef.current) return;
@@ -611,6 +616,7 @@ export default function ChatWindow({
     setStreamingText("");
     setStatusOverride(null);
     setLoadingKind(kind);
+    setSendingConvoId(convoId);
     setLoading(true);
 
     try {
@@ -666,6 +672,7 @@ export default function ChatWindow({
       setStreamingText("");
       setStatusOverride(null);
       setLoading(false);
+      setSendingConvoId(null);
     }
   }
 
@@ -841,13 +848,13 @@ export default function ChatWindow({
                 isRegenerating={regeneratingId === m.id}
               />
             ))}
-            {loading && streamingText && (
+            {showLoadingHere && streamingText && (
               <MessageBubble
                 message={{ id: "streaming", role: "assistant", content: streamingText, createdAt: 0 }}
                 streaming
               />
             )}
-            {loading && !streamingText && (
+            {showLoadingHere && !streamingText && (
               <LoadingStatus kind={loadingKind} override={statusOverride} lang={lang} />
             )}
             <div ref={bottomRef} />
