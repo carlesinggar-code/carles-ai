@@ -489,7 +489,13 @@ export default function ChatWindow({
       } else if (ev.t === "notes" && ev.text) {
         notes = ev.text;
       } else if (ev.t === "error") {
-        throw new Error(ev.message || t("errorMsg"));
+        // Jawaban sudah sebagian tampil? Pertahankan, jangan dibuang gara-gara error di ujung.
+        if (reply.trim()) {
+          reply += `\n\n⚠️ ${ev.message || t("errorMsg")}`;
+          handlers.onDelta?.(reply);
+        } else {
+          throw new Error(ev.message || t("errorMsg"));
+        }
       }
     }
 

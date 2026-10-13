@@ -95,6 +95,8 @@ const FIRST_CHUNK_SEARCH_MS = 13_000;
 const FIRST_CHUNK_PLAIN_MS = 10_000;
 const STREAM_BUDGET_MS = 50_000;
 const MIN_ATTEMPT_MS = 3_500;
+// Setelah jawaban mulai mengalir: kalau tidak ada potongan baru selama ini, anggap macet.
+const IDLE_CHUNK_MS = 20_000;
 function timeScale(): number {
   const n = Number(process.env.GEMINI_TIMEOUT_SCALE);
   return Number.isFinite(n) && n > 0 ? n : 1;
@@ -162,7 +164,8 @@ function getKeySlots(): KeySlot[] {
       .filter(Boolean);
     const unique = Array.from(new Set(raw));
     if (unique.length === 0) {
-      throw new Error("GEMINI_API_KEY belum diset di server.");
+      console.error("[gemini] GEMINI_API_KEY / GEMINI_API_KEYS belum diset di server.");
+      throw new Error("Carles.ai sedang mengalami gangguan. Coba lagi nanti.");
     }
     slotPool = unique.map((apiKey, i) => ({ id: `k${i + 1}`, ai: new GoogleGenAI({ apiKey }) }));
   }
@@ -330,7 +333,7 @@ export async function* streamGemini(
       throw err;
     }
   }
-  throw lastErr ?? new Error("Semua kunci Gemini gagal.");
+  throw lastErr ?? new Error("Carles.ai sedang bermasalah. Coba lagi nanti.");
 }
 
 async function* streamWithSlot(
@@ -370,6 +373,15 @@ async function* streamWithSlot(
         timedOut = true;
         ctrl.abort();
       }, limit);
+      // Penjaga "macet di tengah jalan": diperbarui setiap ada potongan baru.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const armIdle = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          timedOut = true;
+          ctrl.abort();
+        }, IDLE_CHUNK_MS * scale);
+      };
 
       try {
         const stream = await ai.models.generateContentStream({
@@ -391,12 +403,13 @@ async function* streamWithSlot(
 
         let firstChunk = true;
         for await (const chunk of stream) {
-          // Chunk pertama tiba = Gemini hidup. Batas waktu awal dilepas; kalau macet
-          // di tengah jawaban, yang berlaku batas total di route (54 dtk).
+          // Chunk pertama tiba = Gemini hidup. Batas waktu awal dilepas, diganti
+          // penjaga "macet antar potongan" yang diperbarui tiap potongan baru.
           if (firstChunk) {
             clearTimeout(timer);
             firstChunk = false;
           }
+          armIdle();
           const grounding = chunk.candidates?.[0]?.groundingMetadata;
 
           // "Lagi cari apa" — hanya dikirim kalau Gemini benar-benar
@@ -423,7 +436,7 @@ async function* streamWithSlot(
 
         if (!gotText) {
           throw new Error(
-            "Gemini tidak mengembalikan jawaban (mungkin diblokir filter keamanan). Coba ubah pertanyaannya."
+            "Carles.ai tidak bisa menjawab ini (mungkin diblokir filter keamanan). Coba ubah pertanyaannya."
           );
         }
 
@@ -476,11 +489,12 @@ async function* streamWithSlot(
         throw err;
       } finally {
         clearTimeout(timer);
+        clearTimeout(idleTimer);
       }
     }
   }
 
-  throw lastErr ?? new Error("Semua model Gemini gagal.");
+  throw lastErr ?? new Error("Carles.ai sedang bermasalah. Coba lagi nanti.");
 }
 
 /**
@@ -761,7 +775,7 @@ export async function generateImage(
       throw err;
     }
   }
-  throw lastErr ?? new Error("Semua model gambar Gemini gagal.");
+  throw lastErr ?? new Error("Pembuatan gambar gagal. Coba lagi nanti.");
 }
 
 /**
@@ -786,7 +800,7 @@ export async function transcribeWithGemini(
       throw err;
     }
   }
-  throw lastErr ?? new Error("Semua kunci Gemini gagal.");
+  throw lastErr ?? new Error("Carles.ai sedang bermasalah. Coba lagi nanti.");
 }
 
 async function transcribeWithSlot(
@@ -825,5 +839,5 @@ async function transcribeWithSlot(
       throw err;
     }
   }
-  throw lastErr ?? new Error("Semua model Gemini gagal.");
+  throw lastErr ?? new Error("Carles.ai sedang bermasalah. Coba lagi nanti.");
 }

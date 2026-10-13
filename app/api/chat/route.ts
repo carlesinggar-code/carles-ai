@@ -112,6 +112,7 @@ const STATUS_TEXT = {
     draw: "Membuat gambar…",
     caption: "Ini gambarnya 👇",
     sources: "Sumber",
+    cut: "\n\n_…jawaban terpotong karena Carles.ai terlalu lama merespons. Coba kirim lagi, atau minta jawaban yang lebih singkat._",
   },
   en: {
     file: "Reading the file…",
@@ -120,47 +121,52 @@ const STATUS_TEXT = {
     draw: "Creating the image…",
     caption: "Here's your image 👇",
     sources: "Sources",
+    cut: "\n\n_…the answer was cut short because Carles.ai took too long to respond. Try again, or ask for a shorter answer._",
   },
 } as const;
 
-// Error mentah dari Google berupa JSON panjang — ubah ke kalimat yang
-// bisa dipahami. Detail aslinya tetap tercatat di log server (console.error).
+// Error mentah dari penyedia AI berupa JSON panjang — ubah ke kalimat yang bisa
+// dipahami pengguna. Nama penyedia (Gemini/Google/Cloudflare) SENGAJA tidak
+// disebut ke pengguna; detail aslinya tetap tercatat di log server (console.error).
 function friendlyError(err: unknown, lang: Lang): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const id = lang !== "en";
   if ((err as { code?: string } | null)?.code === "CHAT_TIMEOUT") {
     return id
-      ? "AI terlalu lama menjawab (server Gemini sedang lambat). Jatahmu tidak terpotong — coba kirim lagi."
-      : "The AI took too long to answer (Gemini is slow right now). Your quota was not used — please try again.";
+      ? "Carles.ai sedang lambat merespons. Jatahmu tidak terpotong — coba kirim lagi sebentar lagi."
+      : "Carles.ai is slow to respond right now. Your quota was not used — please try again in a moment.";
   }
   if (err instanceof ImageTimeoutError || (err as { code?: string } | null)?.code === "IMAGE_TIMEOUT") {
     return id
-      ? "Pembuatan gambar terlalu lama (server gambar sedang sibuk). Jatahmu tidak terpotong — coba lagi sebentar lagi."
-      : "Image creation took too long (the image server is busy). Your quota was not used — please try again shortly.";
+      ? "Pembuatan gambar terlalu lama (Carles.ai sedang sibuk). Jatahmu tidak terpotong — coba lagi sebentar lagi."
+      : "Image creation took too long (Carles.ai is busy). Your quota was not used — please try again shortly.";
   }
   switch (classifyGeminiError(err)) {
     case "quota":
       return id
-        ? `Jatah AI hari ini sedang habis di semua model. Coba lagi nanti, reset sekitar jam ${resetTimeWIB()}.`
-        : `Today's AI quota is used up on every model. Try again later — it resets around ${resetTimeWIB()}.`;
+        ? `Kapasitas AI Carles.ai hari ini sedang penuh. Coba lagi nanti — reset sekitar jam ${resetTimeWIB()}.`
+        : `Carles.ai's AI capacity is full for today. Try again later — it resets around ${resetTimeWIB()}.`;
     case "missing":
       return id
-        ? "Model Gemini yang dipakai sudah tidak tersedia. Ganti GEMINI_MODELS / GEMINI_IMAGE_MODELS di pengaturan server."
-        : "The Gemini models in use are no longer available. Update GEMINI_MODELS / GEMINI_IMAGE_MODELS on the server.";
+        ? "Carles.ai sedang dalam perbaikan. Coba lagi nanti."
+        : "Carles.ai is under maintenance. Please try again later.";
     case "overloaded":
       return id
-        ? "Server Gemini sedang penuh. Coba lagi sebentar lagi."
-        : "Gemini is busy right now. Please try again in a moment.";
+        ? "Carles.ai sedang sibuk. Coba lagi sebentar lagi."
+        : "Carles.ai is busy right now. Please try again in a moment.";
     case "auth":
       return id
-        ? "API key Gemini ditolak. Periksa GEMINI_API_KEY di server."
-        : "The Gemini API key was rejected. Check GEMINI_API_KEY on the server.";
+        ? "Carles.ai sedang mengalami gangguan. Coba lagi nanti."
+        : "Carles.ai is having a problem. Please try again later.";
     default:
-      // Pesan yang memang sengaja kita tulis sendiri (pendek, bukan JSON mentah)
-      if (raw && raw.length < 250 && !raw.includes("{")) return raw;
+      // Pesan yang memang sengaja kita tulis sendiri (pendek, bukan JSON mentah).
+      // Penjaga terakhir: kalau ada nama penyedia/istilah teknis, jangan ditampilkan.
+      if (raw && raw.length < 250 && !raw.includes("{") && !/gemini|google|cloudflare|pollinations|api[ _-]?key|token|supabase/i.test(raw)) {
+        return raw;
+      }
       return id
-        ? "Terjadi kesalahan saat memproses permintaan."
-        : "Something went wrong while processing the request.";
+        ? "Carles.ai sedang bermasalah. Silakan coba lagi sebentar lagi."
+        : "Carles.ai is having trouble right now. Please try again in a moment.";
   }
 }
 
@@ -391,13 +397,20 @@ export async function POST(req: NextRequest) {
           if (notes) send({ t: "notes", text: notes.slice(0, MAX_NOTES_CHARS) });
         }
 
-        if (!delivered) throw new Error("Gemini tidak mengembalikan jawaban.");
+        if (!delivered) throw new Error("Carles.ai tidak bisa menjawab ini (mungkin diblokir filter keamanan). Coba ubah pertanyaannya.");
         send({ t: "done" });
       } catch (err) {
         console.error("Chat API error:", err);
-        // Gagal sebelum user menerima apa pun = bukan salah user → jatah dikembalikan.
-        if (!delivered) await refundQuota(email || `guest:${ip}`, kind, quota.day);
-        send({ t: "error", message: friendlyError(err, lang) });
+        if (delivered && mode === "text") {
+          // Jawaban SUDAH sebagian tampil di layar: jangan dibuang dan diganti pesan error.
+          // Akhiri dengan catatan "terpotong" supaya yang sudah dibaca tetap ada.
+          send({ t: "delta", text: S.cut });
+          send({ t: "done" });
+        } else {
+          // Gagal sebelum user menerima apa pun = bukan salah user → jatah dikembalikan.
+          if (!delivered) await refundQuota(email || `guest:${ip}`, kind, quota.day);
+          send({ t: "error", message: friendlyError(err, lang) });
+        }
       } finally {
         console.info(`[chat] selesai mode=${mode} dalam ${Date.now() - startedAt}ms terkirim=${delivered}`);
         controller.close();
