@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { removeImagesOfConversations } from "@/lib/imageStorage";
+import { hardDeleteConversations } from "@/lib/imageStorage";
 
 export const runtime = "nodejs";
 
@@ -61,17 +61,10 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: "Percakapan tidak ditemukan." }, { status: 404 });
   }
 
-  // Hapus file gambar di Storage dulu, baru baris databasenya.
-  await removeImagesOfConversations([params.id]);
-
-  const { error } = await supabase
-    .from("conversations")
-    .delete()
-    .eq("id", params.id)
-    .eq("user_email", session.user.email);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  // Hapus PERMANEN: file gambar di Storage + semua pesan + percakapannya.
+  const failure = await hardDeleteConversations([params.id], session.user.email);
+  if (failure) {
+    return NextResponse.json({ error: failure }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

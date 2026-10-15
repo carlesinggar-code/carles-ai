@@ -272,15 +272,22 @@ function createModelQueue(base: string[], kind: ModelKind, slot: KeySlot) {
 // Gemini pakai role "user" / "model" (bukan "assistant"). Gambar ditaruh
 // SEBELUM teks di dalam pesan yang sama, sesuai anjuran dokumentasi Google.
 function toContents(messages: GeminiMessage[]) {
-  return messages.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [
+  const out: { role: string; parts: Array<Record<string, unknown>> }[] = [];
+  for (const m of messages) {
+    const role = m.role === "assistant" ? "model" : "user";
+    const parts: Array<Record<string, unknown>> = [
       ...(m.images ?? []).map((img) => ({
         inlineData: { mimeType: img.mimeType, data: img.data },
       })),
       { text: m.content && m.content.trim() ? m.content : "(lampiran)" },
-    ],
-  }));
+    ];
+    // Dua pesan se-peran berurutan (mis. jawaban gagal yang disaring) digabung,
+    // supaya urutan user/model tetap bergantian seperti yang diminta AI.
+    const prev = out[out.length - 1];
+    if (prev && prev.role === role) prev.parts.push(...parts);
+    else out.push({ role, parts });
+  }
+  return out;
 }
 
 // Pesan sapaan/pendek tidak butuh Google Search — search menambah beberapa

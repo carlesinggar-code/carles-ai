@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { removeImagesOfConversations, expireOldImages } from "@/lib/imageStorage";
+import { hardDeleteConversations, expireOldImages } from "@/lib/imageStorage";
 
 export const runtime = "nodejs";
 
@@ -23,10 +23,9 @@ async function evictOldestIfNeeded(userEmail: string) {
 
   if (data.length > MAX_CONVERSATIONS_PER_USER) {
     const idsToDelete = data.slice(MAX_CONVERSATIONS_PER_USER).map((c) => c.id);
-    // Hapus dulu file gambarnya di Storage, baru baris databasenya —
-    // kalau tidak, filenya jadi yatim dan menumpuk selamanya.
-    await removeImagesOfConversations(idsToDelete);
-    await supabase.from("conversations").delete().in("id", idsToDelete);
+    // Hapus permanen: file gambar + pesan + percakapan.
+    const failure = await hardDeleteConversations(idsToDelete, userEmail);
+    if (failure) console.error("[conversations] gagal menghapus percakapan lama:", failure);
   }
 }
 

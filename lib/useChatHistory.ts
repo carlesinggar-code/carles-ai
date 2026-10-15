@@ -192,13 +192,16 @@ export function useChatHistory() {
 
       if (!id.startsWith("local-")) {
         try {
-          await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+          const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+          // Gagal dihapus di server → muat ulang daftar supaya tidak berbohong
+          // (percakapan yang masih ada di server muncul lagi).
+          if (!res.ok) refreshList();
         } catch {
-          // ignore
+          refreshList();
         }
       }
     },
-    []
+    [refreshList]
   );
 
   const addMessage = useCallback(

@@ -64,6 +64,41 @@ export async function removeImagesOfConversations(conversationIds: string[]): Pr
 }
 
 /**
+ * HAPUS PERMANEN percakapan: file gambar di Storage, semua baris pesan, lalu
+ * baris percakapannya. Pesan dihapus EKSPLISIT (tidak bergantung pada
+ * "on delete cascade" di database), jadi tidak ada sisa data. Kalau
+ * `userEmail` diisi, hanya percakapan milik akun itu yang disentuh.
+ * Mengembalikan pesan error (atau null kalau sukses).
+ */
+export async function hardDeleteConversations(
+  conversationIds: string[],
+  userEmail?: string
+): Promise<string | null> {
+  if (conversationIds.length === 0) return null;
+  const supabase = getSupabaseAdmin();
+
+  let ids = conversationIds;
+  if (userEmail) {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("id")
+      .in("id", conversationIds)
+      .eq("user_email", userEmail);
+    if (error) return error.message;
+    ids = (data ?? []).map((c) => c.id as string);
+    if (ids.length === 0) return null;
+  }
+
+  await removeImagesOfConversations(ids);
+
+  const { error: msgErr } = await supabase.from("messages").delete().in("conversation_id", ids);
+  if (msgErr) return msgErr.message;
+
+  const { error: convoErr } = await supabase.from("conversations").delete().in("id", ids);
+  return convoErr ? convoErr.message : null;
+}
+
+/**
  * Gambar KIRIMAN USER dihapus setelah `keep` pesan user berikutnya — tapi
  * HANYA kalau catatan isi gambarnya (image_notes) sudah tersimpan, supaya AI
  * tetap bisa menjawab pertanyaan lanjutan. Mengembalikan id pesan yang dihapus gambarnya.

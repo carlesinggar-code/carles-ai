@@ -89,10 +89,13 @@ export default function Sidebar({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete(c.id);
+                  // Penghapusan permanen (database + gambar), jadi minta konfirmasi dulu.
+                  if (window.confirm(`Hapus percakapan "${c.title}"? Tidak bisa dikembalikan.`)) {
+                    onDelete(c.id);
+                  }
                 }}
                 title="Hapus"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-100 md:opacity-0 md:group-hover:opacity-100
                            p-1 rounded-md hover:bg-red-500/10 hover:text-red-500 transition-opacity"
               >
                 <Trash2 size={14} />

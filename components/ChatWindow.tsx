@@ -333,7 +333,7 @@ export default function ChatWindow({
     "text/csv",
     "text/plain",
   ];
-  const MAX_DOCUMENT_BYTES = 4 * 1024 * 1024; // 4MB — jaga-jaga limit body Vercel (4.5MB)
+  const MAX_DOCUMENT_BYTES = 3 * 1024 * 1024; // 3MB — base64 membesar ±33%, batas body Vercel 4.5MB
 
   function readFileAsBase64(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -373,7 +373,7 @@ export default function ChatWindow({
       return;
     }
     if (file.size > MAX_DOCUMENT_BYTES) {
-      alert("Ukuran file kemaksimalan 4MB. Coba file yang lebih kecil.");
+      alert("Ukuran file maksimal 3MB. Coba file yang lebih kecil.");
       return;
     }
     const base64 = await readFileAsBase64(file);
@@ -447,6 +447,12 @@ export default function ChatWindow({
       let message = t("errorMsg");
       let reason: string | undefined;
       let quotaKind: string | undefined;
+      if (res.status === 413) {
+        message =
+          payload.lang === "en"
+            ? "The attachment is too large. Try a smaller file or image."
+            : "Lampiran terlalu besar. Coba file atau gambar yang lebih kecil.";
+      }
       try {
         const data = await res.json();
         if (data?.error) message = data.error;

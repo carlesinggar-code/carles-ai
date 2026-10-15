@@ -211,7 +211,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const messages = allMessages.slice(-MAX_HISTORY_MESSAGES);
+  // Bubble error ("⚠️ ...") hanya untuk tampilan, jangan dikirim ke AI sebagai riwayat.
+  // Setelah dipotong, riwayat harus diawali pesan user (AI menolak kalau diawali jawaban).
+  const messages = allMessages
+    .filter((m, i) => i === allMessages.length - 1 || !(m.role === "assistant" && String(m.content ?? "").startsWith("⚠️")))
+    .slice(-MAX_HISTORY_MESSAGES);
+  while (messages.length > 1 && messages[0].role === "assistant") messages.shift();
   const last = messages[messages.length - 1];
   // Catatan diagnosa di Logs Vercel (tanpa isi pesan lengkap, hanya panjang & awalnya).
   console.info(
@@ -248,7 +253,11 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+        } catch {
+          // Pengguna menutup tab / koneksi putus — abaikan, jangan bikin error berantai.
+        }
       };
       let delivered = false; // sudah ada hasil yang sampai ke user?
 
@@ -413,7 +422,11 @@ export async function POST(req: NextRequest) {
         }
       } finally {
         console.info(`[chat] selesai mode=${mode} dalam ${Date.now() - startedAt}ms terkirim=${delivered}`);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // sudah tertutup
+        }
       }
     },
   });
