@@ -39,8 +39,8 @@ export default function QuotaModal({ onClose, lang, reason, kind = "chat", isGue
             ? (isEn ? "The global image quota is exhausted for today." : "Jatah pembuatan gambar global hari ini sudah habis.")
             : kind === "image"
               ? (isEn
-                  ? `You've reached your daily image creation limit.${isGuest ? " Sign in to create images." : ""}`
-                  : `Kamu telah mencapai batas pembuatan gambar harian.${isGuest ? " Login dulu untuk membuat gambar." : ""}`)
+                  ? `You've reached your daily image creation limit.${isGuest ? " Your free guest trial is used. Sign in to create more." : ""}`
+                  : `Kamu telah mencapai batas pembuatan gambar harian.${isGuest ? " Coba gratis tamu sudah terpakai. Login untuk membuat lebih banyak." : ""}`)
               : kind === "upload"
                 ? (isEn ? "You've reached your daily limit for sending images." : "Kamu telah mencapai batas kirim gambar harian.")
                 : (isEn

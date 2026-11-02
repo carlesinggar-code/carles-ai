@@ -546,11 +546,6 @@ export default function ChatWindow({
     const content = (text ?? input).trim();
     if ((!content && !pendingImage && !pendingFile) || loading) return;
 
-    if (imageMode && !session) {
-      setAuthModalOpen(true);
-      return;
-    }
-
     const sendMode: "text" | "image" = imageMode ? "image" : "text";
     const kind: LoadingKind = imageMode
       ? "image"
@@ -634,7 +629,8 @@ export default function ChatWindow({
         content: m.content,
         // Semua gambar di riwayat dikirim (URL-nya saja, ringan) — server
         // yang memilih beberapa terbaru untuk dibaca ulang Gemini.
-        image: m.image,
+        // Gambar buatan untuk tamu berupa data URL (besar): jangan ikut dikirim ke server.
+        image: m.image && !m.image.startsWith("data:") ? m.image : undefined,
         imageNotes: m.imageNotes,
         imageExpired: m.imageExpired,
         // Gambar baru + file dokumen cuma disertakan buat pesan TERAKHIR.
@@ -696,7 +692,7 @@ export default function ChatWindow({
     const history: ChatPayloadMessage[] = historyUpTo.map((m, i) => ({
       role: m.role,
       content: m.content,
-      image: m.image,
+      image: m.image && !m.image.startsWith("data:") ? m.image : undefined,
       imageNotes: m.imageNotes,
       imageExpired: m.imageExpired,
       file: i === lastIndex ? cachedFile : undefined,
@@ -906,9 +902,13 @@ export default function ChatWindow({
             <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: "var(--text-secondary)" }}>
               <ImagePlus size={14} className="text-accent shrink-0" />
               <span>
-                {lang === "en"
-                  ? "Create-image mode is on. Describe the image, or attach one to edit it."
-                  : "Mode buat gambar aktif. Tulis deskripsi gambarnya, atau lampirkan gambar untuk diedit."}
+                {!session
+                  ? lang === "en"
+                    ? "Create-image mode is on. Free trial: describe the image you want (1 try)."
+                    : "Mode buat gambar aktif. Coba gratis: tulis deskripsi gambarnya (1x coba)."
+                  : lang === "en"
+                    ? "Create-image mode is on. Describe the image, or attach one to edit it."
+                    : "Mode buat gambar aktif. Tulis deskripsi gambarnya, atau lampirkan gambar untuk diedit."}
               </span>
               <button onClick={() => setImageMode(false)} className="underline shrink-0">
                 {lang === "en" ? "Turn off" : "Matikan"}
@@ -945,11 +945,8 @@ export default function ChatWindow({
 
             <button
               onClick={() => {
-                if (!session) {
-                  setAuthModalOpen(true);
-                } else {
-                  setImageMode((v) => !v);
-                }
+                // Tamu juga boleh mencoba (jatah gratis dijaga server).
+                setImageMode((v) => !v);
               }}
               className={`p-2 rounded-xl transition-colors shrink-0 ${
                 imageMode ? "bg-accent text-white" : "hover:bg-black/5"

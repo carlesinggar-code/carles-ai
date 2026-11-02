@@ -26,6 +26,8 @@ export const LIMITS = {
   image: envInt("IMAGE_LIMIT_PER_DAY", 3),
   upload: envInt("UPLOAD_LIMIT_PER_DAY", 10),
   globalImage: envInt("GLOBAL_IMAGE_LIMIT_PER_DAY", 40),
+  // Coba gratis untuk tamu (belum login): jumlah gambar per jaringan (IP) per hari.
+  guestImage: envInt("GUEST_IMAGE_LIMIT_PER_DAY", 1),
 };
 
 export type QuotaKind = "chat" | "image" | "upload";
@@ -75,7 +77,9 @@ export async function consumeQuota(
   const userLimit = isGuest
     ? kind === "chat"
       ? 5 // Guest cuma boleh 5 chat
-      : 0 // Guest TIDAK BOLEH image/upload
+      : kind === "image"
+        ? LIMITS.guestImage // Coba gratis: tamu boleh buat gambar sebanyak ini (default 1x)
+        : 0 // Guest TIDAK BOLEH kirim/upload gambar
     : LIMITS[kind];
 
   try {

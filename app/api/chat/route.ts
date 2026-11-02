@@ -111,6 +111,8 @@ const STATUS_TEXT = {
     search: (q: string) => `Mencari di web: ${q}`,
     draw: "Membuat gambar…",
     caption: "Ini gambarnya 👇",
+    guestNote:
+      "\n\nSuka hasilnya? **Login dengan Google** untuk lanjut: jatah gambar lebih banyak, edit gambar, baca gambar, dan chat lebih leluasa.",
     sources: "Sumber",
     cut: "\n\n_…jawaban terpotong karena Carles.ai terlalu lama merespons. Coba kirim lagi, atau minta jawaban yang lebih singkat._",
   },
@@ -120,6 +122,8 @@ const STATUS_TEXT = {
     search: (q: string) => `Searching the web: ${q}`,
     draw: "Creating the image…",
     caption: "Here's your image 👇",
+    guestNote:
+      "\n\nLike it? **Sign in with Google** to continue: more images per day, image editing, image reading, and more chat.",
     sources: "Sources",
     cut: "\n\n_…the answer was cut short because Carles.ai took too long to respond. Try again, or ask for a shorter answer._",
   },
@@ -197,9 +201,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Pesan tidak boleh kosong." }, { status: 400 });
   }
 
-  // Proteksi Fitur Lanjutan: Image/Vision wajib login
-  const hasImage = allMessages.some((m) => m.imageData || m.image);
-  if ((mode === "image" || hasImage) && !email) {
+  // Proteksi Fitur Lanjutan: baca gambar (Vision) & edit gambar wajib login.
+  // Tamu boleh COBA membuat gambar dari teks (dibatasi jatah tamu di quota.ts).
+  // Yang dihitung hanya gambar milik USER — gambar hasil buatan AI (jawaban
+  // sebelumnya di percakapan tamu) bukan lampiran.
+  const hasImage = allMessages.some((m) => m.role === "user" && (m.imageData || m.image));
+  if (hasImage && !email) {
     return NextResponse.json(
       {
         error:
@@ -266,15 +273,15 @@ export async function POST(req: NextRequest) {
         // Mode BUAT GAMBAR
         // ------------------------------------------------------------
         if (mode === "image") {
-          if (!email) throw new Error("Login diperlukan untuk membuat gambar.");
           // Sumber gambar untuk diedit: gambar yang baru dilampirkan, atau
           // gambar terdekat di 4 pesan terakhir — jadi user bisa lanjut
           // bilang "ubah jadi warna biru" ke gambar tadi.
           const inputImages: InlineImage[] = [];
-          const fresh = parseDataUrl(last.imageData);
+          // Tamu tidak bisa mengedit gambar: hanya buat dari teks.
+          const fresh = email ? parseDataUrl(last.imageData) : null;
           if (fresh) {
             inputImages.push(fresh);
-          } else {
+          } else if (email) {
             const sourceUrl =
               last.image ??
               messages
@@ -295,10 +302,15 @@ export async function POST(req: NextRequest) {
             generateImage(imagePrompt, inputImages),
             new Promise<never>((_, reject) => setTimeout(() => reject(new ImageTimeoutError()), 52_000)),
           ]);
-          const url = await saveGeneratedImage(email, image);
+          // User login: disimpan di storage (kedaluwarsa 30 hari). Tamu: TIDAK
+          // disimpan — langsung dikirim ke browser sebagai data URL, supaya
+          // percobaan gratis tidak memakan storage.
+          const url = email
+            ? await saveGeneratedImage(email, image)
+            : `data:${image.mimeType};base64,${image.data}`;
 
           delivered = true;
-          send({ t: "delta", text: text || S.caption });
+          send({ t: "delta", text: (text || S.caption) + (email ? "" : S.guestNote) });
           send({ t: "image", url });
           send({ t: "done" });
           return;
